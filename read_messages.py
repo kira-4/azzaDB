@@ -13,9 +13,12 @@ chat_id = -1001869042104
 async def get_history(chat):
     # chat_info = await bot.get_chat(chat)
     # print(f"chat info {chat_info}")
-    async for message in bot.get_chat_history(chat, limit=15):
+    async for message in bot.get_chat_history(chat, limit=200):
         if message.text:
-            print(message)
+            # print(fr"{message.text}, {message.id}")
+            text = message.text.replace("\n", "\\n")
+            with open("data.csv", "a") as f:
+                f.write(f"{text}, {message.id}\n")
 
 
 async def main():
