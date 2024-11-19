@@ -13,7 +13,7 @@ chat_id = -1001869042104
 async def get_history(chat):
     # chat_info = await bot.get_chat(chat)
     # print(f"chat info {chat_info}")
-    async for message in bot.get_chat_history(chat, limit=200):
+    async for message in bot.get_chat_history(chat):
         if message.text:
             # print(fr"{message.text}, {message.id}")
             text = message.text.replace("\n", "\\n")
