@@ -17,7 +17,7 @@ async def get_history(chat):
         if message.text:
             # print(fr"{message.text}, {message.id}")
             text = message.text.replace("\n", "\\n")
-            with open("data.csv", "a") as f:
+            with open("data.csv", "a", encoding="utf-8") as f:
                 f.write(f"{text}, {message.id}\n")
 
 
