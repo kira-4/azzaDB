@@ -52,9 +52,42 @@ raw_messages → (grouper) → albums + audio_tracks
 ### Key design decisions
 
 - `raw_messages` is the source of truth. The grouper can be re-run with improved logic without re-scraping Telegram.
-- The Hydrogram session file lives at `old/ret_mes.session`. If it's invalidated (AUTH_KEY_UNREGISTERED), delete it and run the scraper interactively to re-authenticate.
 - AI confidence < 0.7 auto-routes albums to `verification_status = 'needs_review'` instead of `'pending'`.
 - `asyncio.create_task()` is used in the bot approval handler so downloads run in the background without blocking the verification queue.
+
+### File tree
+
+```
+azzaDB/
+├── scrape_history.py
+├── run_bot.py
+├── requirements.txt
+├── data/
+│   └── azzadb.sqlite
+├── downloads/
+│   ├── audio/
+│   └── covers/
+└── src/
+    ├── config.py
+    ├── ai/
+    │   ├── gemini_client.py
+    │   └── prompts.py
+    ├── bot/
+    │   ├── main.py
+    │   └── handlers/
+    │       ├── verification_handler.py
+    │       └── admin_handler.py
+    ├── database/
+    │   ├── db.py
+    │   └── models.py
+    ├── pipeline/
+    │   ├── album_pipeline.py
+    │   └── metadata_embedder.py
+    └── scraper/
+        ├── history_scraper.py
+        ├── message_grouper.py
+        └── asset_downloader.py
+```
 
 ### File organisation
 
