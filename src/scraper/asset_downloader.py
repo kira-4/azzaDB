@@ -56,7 +56,17 @@ async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
             saved_path = await client.download_media(message, file_name=dest_dir + "/")
             if not saved_path:
                 raise ValueError(f"No media in message {message_id}")
-            stem = os.path.splitext(os.path.basename(saved_path))[0]
+
+            # Prefer the name Telegram shows in the music player (title > file_name > saved path stem)
+            media = getattr(message, "audio", None) or getattr(message, "document", None)
+            original_name = None
+            if media:
+                original_name = getattr(media, "file_name", None) or getattr(media, "title", None)
+            stem = (
+                os.path.splitext(original_name)[0]
+                if original_name
+                else os.path.splitext(os.path.basename(saved_path))[0]
+            )
             return saved_path, stem
         except FloodWait as e:
             wait = e.value * (2 ** attempt)
