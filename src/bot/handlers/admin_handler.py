@@ -12,6 +12,7 @@ from src.database.db import (
     get_verification_stats,
 )
 from src.ai.gemini_client import extract_metadata
+from src.bot.handlers.verification_handler import send_next_pending
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,15 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update.effective_user.id):
+        return
+    await send_next_pending(context)
+
+
 def build_admin_handlers() -> list:
     return [
+        CommandHandler("next", cmd_next),
         CommandHandler("status", cmd_status),
         CommandHandler("retry", cmd_retry),
         CommandHandler("export", cmd_export),
