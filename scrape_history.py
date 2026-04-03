@@ -3,7 +3,7 @@ CLI: Scrape full message history from the target Telegram group,
 then run the message grouper to create album records.
 
 Usage:
-    python scrape_history.py [--skip-scrape] [--skip-group] [--ai]
+    python scrape_history.py [--skip-scrape] [--skip-group] [--ai] [--limit N]
 """
 import asyncio
 import argparse
@@ -20,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def main(skip_scrape: bool, skip_group: bool, run_ai: bool):
+async def main(skip_scrape: bool, skip_group: bool, run_ai: bool, limit: int):
     from src.database.db import init_db
     from src.config import TARGET_GROUP_ID
 
@@ -29,8 +29,11 @@ async def main(skip_scrape: bool, skip_group: bool, run_ai: bool):
 
     if not skip_scrape:
         from src.scraper.history_scraper import scrape_full_history
-        logger.info("Scraping history for group %d…", TARGET_GROUP_ID)
-        inserted, skipped = await scrape_full_history(TARGET_GROUP_ID)
+        if limit:
+            logger.info("Scraping latest %d messages from group %d…", limit, TARGET_GROUP_ID)
+        else:
+            logger.info("Scraping full history for group %d…", TARGET_GROUP_ID)
+        inserted, skipped = await scrape_full_history(TARGET_GROUP_ID, limit=limit)
         logger.info("Scrape complete: %d inserted, %d skipped", inserted, skipped)
 
     if not skip_group:
@@ -51,6 +54,8 @@ if __name__ == "__main__":
     parser.add_argument("--skip-scrape", action="store_true", help="Skip Telegram scraping")
     parser.add_argument("--skip-group", action="store_true", help="Skip message grouping")
     parser.add_argument("--ai", action="store_true", help="Also run AI extraction after grouping")
+    parser.add_argument("--limit", type=int, default=0, metavar="N",
+                        help="Only fetch the N most recent messages (0 = all)")
     args = parser.parse_args()
 
-    asyncio.run(main(args.skip_scrape, args.skip_group, args.ai))
+    asyncio.run(main(args.skip_scrape, args.skip_group, args.ai, args.limit))
