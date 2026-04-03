@@ -50,11 +50,18 @@ EDITABLE_FIELDS = [
 ]
 
 
+def _message_link(group_id: int, message_id: int) -> str:
+    # Supergroup IDs are -100XXXXXXXXXX; strip the leading -100 for the t.me/c/ link
+    channel_id = str(abs(group_id))[3:]
+    return f"https://t.me/c/{channel_id}/{message_id}"
+
+
 def _format_album_card(album: dict, artists: list) -> str:
     artist_names = ", ".join(a["name_ar"] for a in artists) if artists else "—"
     confidence_pct = int((album["ai_confidence"] or 0) * 100)
+    link = _message_link(album["telegram_group_id"], album["info_message_id"])
     return (
-        f"📋 *NEW ALBUM FOR REVIEW* (ID: {album['id']})\n\n"
+        f"📋 *NEW ALBUM FOR REVIEW* (ID: {album['id']}) — [source]({link})\n\n"
         f"📀 Type: {album['album_type'] or '—'}\n"
         f"🎵 Name: {album['album_name_ar'] or '—'}\n"
         f"🎤 Artist(s): {artist_names}\n"
@@ -63,7 +70,8 @@ def _format_album_card(album: dict, artists: list) -> str:
         f"📍 Location: {album['location_ar'] or '—'}\n"
         f"🎚️ Audio Eng: {album['audio_engineer'] or '—'}\n"
         f"📝 Notes: {album['notes_ar'] or '—'}\n\n"
-        f"AI Confidence: {confidence_pct}%"
+        f"AI Confidence: {confidence_pct}%\n\n"
+        f"📄 *Original text:*\n```\n{album['raw_text']}\n```"
     )
 
 
