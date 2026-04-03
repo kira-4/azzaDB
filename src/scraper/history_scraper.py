@@ -35,14 +35,16 @@ def _get_file_id(message) -> str | None:
     return None
 
 
-async def scrape_full_history(group_id: int):
-    """Iterate all messages in a group and insert them into raw_messages."""
+async def scrape_full_history(group_id: int, limit: int = 0):
+    """Iterate messages in a group and insert them into raw_messages.
+    limit=0 means fetch everything; limit>0 fetches only the N most recent messages."""
     client = Client(SESSION_NAME, api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH)
     inserted = 0
     skipped = 0
 
     async with client:
-        async for message in client.get_chat_history(group_id):
+        history_kwargs = {"limit": limit} if limit > 0 else {}
+        async for message in client.get_chat_history(group_id, **history_kwargs):
             msg_type = _classify_message(message)
             text = None
             if message.text:
