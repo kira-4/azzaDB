@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from datetime import datetime
 
 from hydrogram import Client
 from hydrogram.errors import FloodWait
@@ -52,7 +51,7 @@ async def scrape_full_history(group_id: int, limit: int = 0):
             elif message.caption:
                 text = message.caption
 
-            date = datetime.fromtimestamp(message.date) if message.date else None
+            date = message.date if message.date else None
             file_id = _get_file_id(message)
 
             was_inserted = insert_raw_message(
