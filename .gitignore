@@ -1,1 +1,28 @@
+# Hydrogram session files
 .hydro
+*.session
+*.session-journal
+
+# Environment
+.env
+
+# Database
+data/azzadb.sqlite
+data/azzadb.sqlite-wal
+data/azzadb.sqlite-shm
+
+# Downloads
+downloads/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store

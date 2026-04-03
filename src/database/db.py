@@ -1,0 +1,224 @@
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime
+from typing import Optional
+
+from src.config import DATABASE_PATH
+from src.database.models import SCHEMA_SQL
+
+
+def get_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(DATABASE_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+
+@contextmanager
+def db_conn():
+    conn = get_connection()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db():
+    with db_conn() as conn:
+        conn.executescript(SCHEMA_SQL)
+
+
+# ─── raw_messages ────────────────────────────────────────────────────────────
+
+def insert_raw_message(message_id: int, group_id: int, message_type: str,
+                        text_content: Optional[str], media_file_id: Optional[str],
+                        date: Optional[datetime]) -> bool:
+    """Insert a raw message. Returns True if inserted, False if already exists."""
+    with db_conn() as conn:
+        try:
+            conn.execute(
+                """INSERT INTO raw_messages
+                   (message_id, group_id, message_type, text_content, media_file_id, date)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (message_id, group_id, message_type, text_content, media_file_id, date),
+            )
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def get_unprocessed_messages(group_id: int) -> list[sqlite3.Row]:
+    with db_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM raw_messages WHERE group_id=? AND processed=0 ORDER BY message_id ASC",
+            (group_id,),
+        ).fetchall()
+
+
+def mark_message_processed(message_id: int, album_id: Optional[int] = None):
+    with db_conn() as conn:
+        conn.execute(
+            "UPDATE raw_messages SET processed=1, album_id=? WHERE message_id=?",
+            (album_id, message_id),
+        )
+
+
+# ─── artists ─────────────────────────────────────────────────────────────────
+
+def get_or_create_artist(name_ar: str) -> int:
+    with db_conn() as conn:
+        row = conn.execute("SELECT id FROM artists WHERE name_ar=?", (name_ar,)).fetchone()
+        if row:
+            return row["id"]
+        cur = conn.execute("INSERT INTO artists (name_ar) VALUES (?)", (name_ar,))
+        return cur.lastrowid
+
+
+# ─── albums ──────────────────────────────────────────────────────────────────
+
+def insert_album(info_message_id: int, group_id: int, raw_text: str,
+                 cover_message_id: Optional[int] = None) -> int:
+    with db_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO albums (info_message_id, cover_message_id, telegram_group_id, raw_text)
+               VALUES (?, ?, ?, ?)""",
+            (info_message_id, cover_message_id, group_id, raw_text),
+        )
+        return cur.lastrowid
+
+
+def get_album(album_id: int) -> Optional[sqlite3.Row]:
+    with db_conn() as conn:
+        return conn.execute("SELECT * FROM albums WHERE id=?", (album_id,)).fetchone()
+
+
+def get_albums_pending_ai() -> list[sqlite3.Row]:
+    with db_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM albums WHERE ai_extracted=0 ORDER BY id ASC"
+        ).fetchall()
+
+
+def get_albums_pending_verification() -> list[sqlite3.Row]:
+    with db_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM albums WHERE verification_status='pending' AND ai_extracted=1 ORDER BY id ASC"
+        ).fetchall()
+
+
+def update_album_ai_fields(album_id: int, fields: dict):
+    set_clause = ", ".join(f"{k}=?" for k in fields)
+    values = list(fields.values()) + [album_id]
+    with db_conn() as conn:
+        conn.execute(
+            f"UPDATE albums SET {set_clause}, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            values,
+        )
+
+
+def set_album_verification(album_id: int, status: str, verified_by: str,
+                            rejection_reason: Optional[str] = None):
+    with db_conn() as conn:
+        conn.execute(
+            """UPDATE albums SET verification_status=?, verified_by=?, verified_at=CURRENT_TIMESTAMP,
+               rejection_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (status, verified_by, rejection_reason, album_id),
+        )
+
+
+def get_verification_stats() -> dict:
+    with db_conn() as conn:
+        row = conn.execute(
+            """SELECT
+               SUM(CASE WHEN verification_status='pending' THEN 1 ELSE 0 END) AS pending,
+               SUM(CASE WHEN verification_status='verified' THEN 1 ELSE 0 END) AS verified,
+               SUM(CASE WHEN verification_status='rejected' THEN 1 ELSE 0 END) AS rejected,
+               SUM(CASE WHEN verification_status='needs_review' THEN 1 ELSE 0 END) AS needs_review,
+               COUNT(*) AS total
+               FROM albums"""
+        ).fetchone()
+        return dict(row)
+
+
+# ─── album_artists ────────────────────────────────────────────────────────────
+
+def link_album_artist(album_id: int, artist_id: int):
+    with db_conn() as conn:
+        try:
+            conn.execute(
+                "INSERT INTO album_artists (album_id, artist_id) VALUES (?, ?)",
+                (album_id, artist_id),
+            )
+        except sqlite3.IntegrityError:
+            pass
+
+
+def get_album_artists(album_id: int) -> list[sqlite3.Row]:
+    with db_conn() as conn:
+        return conn.execute(
+            """SELECT a.* FROM artists a
+               JOIN album_artists aa ON aa.artist_id = a.id
+               WHERE aa.album_id=?""",
+            (album_id,),
+        ).fetchall()
+
+
+# ─── audio_tracks ─────────────────────────────────────────────────────────────
+
+def insert_audio_track(album_id: int, message_id: int, track_number: int,
+                        duration_seconds: Optional[int], file_size_bytes: Optional[int],
+                        mime_type: Optional[str], telegram_file_id: Optional[str]) -> int:
+    with db_conn() as conn:
+        try:
+            cur = conn.execute(
+                """INSERT INTO audio_tracks
+                   (album_id, message_id, track_number, duration_seconds, file_size_bytes,
+                    mime_type, telegram_file_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (album_id, message_id, track_number, duration_seconds,
+                 file_size_bytes, mime_type, telegram_file_id),
+            )
+            return cur.lastrowid
+        except sqlite3.IntegrityError:
+            row = conn.execute(
+                "SELECT id FROM audio_tracks WHERE message_id=?", (message_id,)
+            ).fetchone()
+            return row["id"]
+
+
+def get_tracks_for_album(album_id: int) -> list[sqlite3.Row]:
+    with db_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM audio_tracks WHERE album_id=? ORDER BY track_number ASC",
+            (album_id,),
+        ).fetchall()
+
+
+def update_track_download(track_id: int, local_path: str):
+    with db_conn() as conn:
+        conn.execute(
+            "UPDATE audio_tracks SET downloaded=1, local_path=? WHERE id=?",
+            (local_path, track_id),
+        )
+
+
+def update_track_embedded(track_id: int):
+    with db_conn() as conn:
+        conn.execute(
+            "UPDATE audio_tracks SET metadata_embedded=1 WHERE id=?", (track_id,)
+        )
+
+
+# ─── ai_extraction_log ────────────────────────────────────────────────────────
+
+def log_ai_extraction(album_id: int, model_version: str, raw_response: str):
+    with db_conn() as conn:
+        conn.execute(
+            "INSERT INTO ai_extraction_log (album_id, model_version, raw_response) VALUES (?, ?, ?)",
+            (album_id, model_version, raw_response),
+        )
