@@ -158,6 +158,29 @@ def link_album_artist(album_id: int, artist_id: int):
             pass
 
 
+def set_album_artists(album_id: int, artist_names: list[str]):
+    """Replace all artists for an album with the given list of names."""
+    with db_conn() as conn:
+        conn.execute("DELETE FROM album_artists WHERE album_id=?", (album_id,))
+        for name in artist_names:
+            name = name.strip()
+            if not name:
+                continue
+            row = conn.execute("SELECT id FROM artists WHERE name_ar=?", (name,)).fetchone()
+            if row:
+                artist_id = row["id"]
+            else:
+                cur = conn.execute("INSERT INTO artists (name_ar) VALUES (?)", (name,))
+                artist_id = cur.lastrowid
+            try:
+                conn.execute(
+                    "INSERT INTO album_artists (album_id, artist_id) VALUES (?, ?)",
+                    (album_id, artist_id),
+                )
+            except sqlite3.IntegrityError:
+                pass
+
+
 def get_album_artists(album_id: int) -> list[sqlite3.Row]:
     with db_conn() as conn:
         return conn.execute(
