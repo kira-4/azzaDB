@@ -62,8 +62,10 @@ def _embed_mp3(track_path: str, title: str, artist_str: str, album_name: str,
                track_number: int, gregorian_year: str, comment: str,
                cover_bytes: bytes | None):
     audio = MP3(track_path)
-    audio.delete()
-    audio.add_tags()
+    if audio.tags is not None:
+        audio.tags.clear()
+    else:
+        audio.add_tags()
 
     tags = audio.tags
     tags["TIT2"] = TIT2(encoding=3, text=title)
