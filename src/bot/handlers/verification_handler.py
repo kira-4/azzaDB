@@ -130,14 +130,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_album_verification(album_id, "verified", str(query.from_user.id))
         album = dict(get_album(album_id))
         link = _message_link(album["telegram_group_id"], album["info_message_id"])
-        await query.edit_message_text(
-            f"✅ Album {album_id} approved by {query.from_user.first_name}. Downloading… [source]({link})",
+        approved_by = query.from_user.first_name
+        msg = await query.edit_message_text(
+            f"⏳ Album {album_id} approved by {approved_by}. Downloading… [source]({link})",
             parse_mode="Markdown",
         )
 
         from src.config import TARGET_GROUP_ID
         from src.scraper.asset_downloader import download_album
-        asyncio.create_task(download_album(album_id, TARGET_GROUP_ID))
+
+        async def _download_and_update():
+            await download_album(album_id, TARGET_GROUP_ID)
+            await context.bot.edit_message_text(
+                chat_id=msg.chat_id,
+                message_id=msg.message_id,
+                text=f"✅ Album {album_id} approved by {approved_by}. Downloaded. [source]({link})",
+                parse_mode="Markdown",
+            )
+
+        asyncio.create_task(_download_and_update())
 
         await send_next_pending(context)
 
