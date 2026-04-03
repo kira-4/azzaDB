@@ -5,6 +5,7 @@ Verification flow:
   3. Reject   → asks for reason text, then sets rejected + reason
   4. Edit     → ConversationHandler walks through each editable field
 """
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -126,10 +127,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     album_id = int(album_id_str)
 
     if action == "approve":
-        set_album_verification(
-            album_id, "verified", str(query.from_user.id)
-        )
-        await query.edit_message_text(f"✅ Album {album_id} approved by {query.from_user.first_name}.")
+        set_album_verification(album_id, "verified", str(query.from_user.id))
+        await query.edit_message_text(f"✅ Album {album_id} approved by {query.from_user.first_name}. Downloading…")
+
+        from src.config import TARGET_GROUP_ID
+        from src.scraper.asset_downloader import download_album
+        asyncio.create_task(download_album(album_id, TARGET_GROUP_ID))
+
         await send_next_pending(context)
 
     elif action == "reject":
