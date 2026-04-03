@@ -2,13 +2,12 @@
 Groups raw_messages rows into album candidates.
 
 State machine (messages sorted ascending by message_id):
-  - TEXT containing 'شريط :' or 'إصدار :' → starts a new album group
+  - Any TEXT message → starts a new album group
   - Following PHOTO → album cover
   - Following AUDIO or DOCUMENT → audio track
-  - Next album-start TEXT → closes current group, opens new one
+  - Next TEXT → closes current group, opens new one
 """
 import logging
-import re
 from dataclasses import dataclass, field
 
 from src.config import TARGET_GROUP_ID
@@ -21,8 +20,6 @@ from src.database.db import (
 
 logger = logging.getLogger(__name__)
 
-ALBUM_START_PATTERN = re.compile(r"(شريط\s*:|إصدار\s*:)", re.UNICODE)
-
 
 @dataclass
 class AlbumCandidate:
@@ -30,12 +27,6 @@ class AlbumCandidate:
     raw_text: str
     cover_message_id: int | None = None
     audio_messages: list[dict] = field(default_factory=list)
-
-
-def _is_album_start(text: str | None) -> bool:
-    if not text:
-        return False
-    return bool(ALBUM_START_PATTERN.search(text))
 
 
 def group_messages(group_id: int = TARGET_GROUP_ID) -> int:
@@ -78,11 +69,11 @@ def group_messages(group_id: int = TARGET_GROUP_ID) -> int:
         text = row["text_content"]
         msg_id = row["message_id"]
 
-        if msg_type == "text" and _is_album_start(text):
+        if msg_type == "text":
             if current is not None:
                 _flush(current)
                 albums_created += 1
-            current = AlbumCandidate(info_message_id=msg_id, raw_text=text)
+            current = AlbumCandidate(info_message_id=msg_id, raw_text=text or "")
 
         elif current is not None:
             if msg_type == "photo" and current.cover_message_id is None:
