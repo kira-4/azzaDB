@@ -6,6 +6,7 @@ Verification flow:
   4. Edit     → ConversationHandler walks through each editable field
 """
 import logging
+import os
 from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -23,6 +24,7 @@ from src.database.db import (
     get_album,
     get_album_artists,
     get_albums_pending_verification,
+    get_tracks_for_album,
     set_album_verification,
     update_album_ai_fields,
 )
@@ -56,7 +58,7 @@ def _message_link(group_id: int, message_id: int) -> str:
     return f"https://t.me/c/{channel_id}/{message_id}"
 
 
-def _format_album_card(album: dict, artists: list) -> str:
+def _format_album_card(album: dict, artists: list, track_count: int) -> str:
     artist_names = ", ".join(a["name_ar"] for a in artists) if artists else "—"
     confidence_pct = int((album["ai_confidence"] or 0) * 100)
     link = _message_link(album["telegram_group_id"], album["info_message_id"])
@@ -65,6 +67,7 @@ def _format_album_card(album: dict, artists: list) -> str:
         f"📀 Type: {album['album_type'] or '—'}\n"
         f"🎵 Name: {album['album_name_ar'] or '—'}\n"
         f"🎤 Artist(s): {artist_names}\n"
+        f"🎶 Tracks: {track_count}\n"
         f"📅 Date: {_format_date(album)}\n"
         f"🕌 Occasion: {album['occasion_ar'] or '—'}\n"
         f"📍 Location: {album['location_ar'] or '—'}\n"
@@ -99,7 +102,14 @@ async def send_next_pending(context: ContextTypes.DEFAULT_TYPE):
 
     album = dict(albums[0])
     artists = get_album_artists(album["id"])
-    text = _format_album_card(album, artists)
+    tracks = get_tracks_for_album(album["id"])
+    text = _format_album_card(album, artists, len(tracks))
+
+    cover_path = album.get("cover_local_path")
+    if cover_path and album.get("cover_downloaded") and os.path.exists(cover_path):
+        with open(cover_path, "rb") as f:
+            await context.bot.send_photo(VERIFICATION_CHAT_ID, photo=f)
+
     await context.bot.send_message(
         VERIFICATION_CHAT_ID,
         text,
