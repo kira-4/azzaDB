@@ -27,6 +27,7 @@ from src.database.db import (
     get_album_artists,
     get_albums_pending_verification,
     get_tracks_for_album,
+    set_album_artists,
     set_album_verification,
     update_album_ai_fields,
 )
@@ -39,6 +40,7 @@ PICK_FIELD, AWAIT_FIELD_VALUE, REJECT_REASON = range(3)
 EDITABLE_FIELDS = [
     ("album_type",    "Type"),
     ("album_name_ar", "Album Name"),
+    ("artist",        "Artist(s)"),
     ("occasion_ar",   "Occasion"),
     ("hijri_date",    "Hijri Date"),
     ("location_ar",   "Location"),
@@ -107,9 +109,11 @@ def _field_picker_keyboard(album_id: int) -> InlineKeyboardMarkup:
 
 
 def _format_picker_text(album_id: int, album: dict) -> str:
+    artists = get_album_artists(album_id)
+    artist_str = ", ".join(a["name_ar"] for a in artists) if artists else "—"
     lines = [f"✏️ <b>Editing Album {album_id}</b> — tap a field to edit:\n"]
     for key, label in EDITABLE_FIELDS:
-        val = _he(str(album.get(key) or "—"))
+        val = _he(artist_str if key == "artist" else str(album.get(key) or "—"))
         lines.append(f"• <b>{label}:</b> {val}")
     return "\n".join(lines)
 
@@ -199,7 +203,11 @@ async def field_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["picker_message_id"] = query.message.message_id
 
     album = dict(get_album(album_id))
-    current_val = str(album.get(field_key) or "")
+    if field_key == "artist":
+        artists = get_album_artists(album_id)
+        current_val = ", ".join(a["name_ar"] for a in artists)
+    else:
+        current_val = str(album.get(field_key) or "")
     label = _FIELD_LABEL[field_key]
 
     prompt = await query.message.reply_text(
@@ -222,7 +230,11 @@ async def receive_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE
     field_key = context.user_data["editing_field_key"]
     new_value = update.message.text.strip()
 
-    update_album_ai_fields(album_id, {field_key: new_value})
+    if field_key == "artist":
+        names = [n.strip() for n in new_value.split(",") if n.strip()]
+        set_album_artists(album_id, names)
+    else:
+        update_album_ai_fields(album_id, {field_key: new_value})
 
     # Clean up the ForceReply prompt and the user's reply message
     for msg_id in (context.user_data.pop("prompt_message_id", None), update.message.message_id):
