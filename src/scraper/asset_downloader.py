@@ -110,4 +110,10 @@ async def download_album(album_id: int, group_id: int):
                 logger.error("Track %d download failed: %s", track["id"], e)
 
     logger.info("Album %d: downloaded %d/%d tracks", album_id, downloaded, len(tracks))
+
+    if downloaded > 0:
+        from src.pipeline.metadata_embedder import embed_metadata_for_album
+        embedded = embed_metadata_for_album(album_id)
+        logger.info("Album %d: embedded metadata for %d tracks", album_id, embedded)
+
     return downloaded
