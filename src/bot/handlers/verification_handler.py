@@ -3,14 +3,15 @@ Verification flow:
   1. Bot sends album card with Approve / Edit / Reject inline buttons.
   2. Approve  → verified
   3. Reject   → asks for reason text, then sets rejected + reason
-  4. Edit     → ConversationHandler walks through each editable field
+  4. Edit     → field picker; tap a field, bot prompts with ForceReply
+                pre-filled with current value; send new value; repeat or Done
 """
 import asyncio
 import logging
 import os
 from datetime import datetime
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -33,28 +34,20 @@ from src.database.db import (
 logger = logging.getLogger(__name__)
 
 # Conversation states
-(
-    EDIT_ALBUM_TYPE,
-    EDIT_ALBUM_NAME,
-    EDIT_OCCASION,
-    EDIT_HIJRI_DATE,
-    EDIT_LOCATION,
-    EDIT_NOTES,
-    REJECT_REASON,
-) = range(7)
+PICK_FIELD, AWAIT_FIELD_VALUE, REJECT_REASON = range(3)
 
 EDITABLE_FIELDS = [
-    ("album_type", "Type (شريط/إصدار)"),
+    ("album_type",    "Type"),
     ("album_name_ar", "Album Name"),
-    ("occasion_ar", "Occasion"),
-    ("hijri_date", "Hijri Date"),
-    ("location_ar", "Location"),
-    ("notes_ar", "Notes"),
+    ("occasion_ar",   "Occasion"),
+    ("hijri_date",    "Hijri Date"),
+    ("location_ar",   "Location"),
+    ("notes_ar",      "Notes"),
 ]
+_FIELD_LABEL = dict(EDITABLE_FIELDS)
 
 
 def _message_link(group_id: int, message_id: int) -> str:
-    # Supergroup IDs are -100XXXXXXXXXX; strip the leading -100 for the t.me/c/ link
     channel_id = str(abs(group_id))[3:]
     return f"https://t.me/c/{channel_id}/{message_id}"
 
@@ -93,10 +86,32 @@ def _review_keyboard(album_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Approve", callback_data=f"approve:{album_id}"),
-            InlineKeyboardButton("✏️ Edit", callback_data=f"edit:{album_id}"),
-            InlineKeyboardButton("❌ Reject", callback_data=f"reject:{album_id}"),
+            InlineKeyboardButton("✏️ Edit",    callback_data=f"edit:{album_id}"),
+            InlineKeyboardButton("❌ Reject",  callback_data=f"reject:{album_id}"),
         ]
     ])
+
+
+def _field_picker_keyboard(album_id: int) -> InlineKeyboardMarkup:
+    rows = []
+    pair = []
+    for key, label in EDITABLE_FIELDS:
+        pair.append(InlineKeyboardButton(f"✏️ {label}", callback_data=f"field:{album_id}:{key}"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    rows.append([InlineKeyboardButton("✅ Done", callback_data=f"edit_done:{album_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _format_picker_text(album_id: int, album: dict) -> str:
+    lines = [f"✏️ <b>Editing Album {album_id}</b> — tap a field to edit:\n"]
+    for key, label in EDITABLE_FIELDS:
+        val = _he(str(album.get(key) or "—"))
+        lines.append(f"• <b>{label}:</b> {val}")
+    return "\n".join(lines)
 
 
 async def send_next_pending(context: ContextTypes.DEFAULT_TYPE):
@@ -154,7 +169,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         asyncio.create_task(_download_and_update())
-
         await send_next_pending(context)
 
     elif action == "reject":
@@ -164,16 +178,91 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action == "edit":
         context.user_data["editing_album_id"] = album_id
-        context.user_data["edit_field_index"] = 0
         album = dict(get_album(album_id))
-        field_key, field_label = EDITABLE_FIELDS[0]
-        current = album.get(field_key) or "—"
         await query.edit_message_text(
-            f"✏️ Editing album {album_id}.\n\n"
-            f"**{field_label}** (current: {current})\n"
-            f"Send new value or /skip to keep:"
+            _format_picker_text(album_id, album),
+            parse_mode="HTML",
+            reply_markup=_field_picker_keyboard(album_id),
         )
-        return EDIT_ALBUM_TYPE
+        return PICK_FIELD
+
+
+async def field_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User tapped a field button — prompt with ForceReply pre-filled with current value."""
+    query = update.callback_query
+    await query.answer()
+
+    _, album_id_str, field_key = query.data.split(":", 2)
+    album_id = int(album_id_str)
+
+    context.user_data["editing_field_key"] = field_key
+    context.user_data["picker_message_id"] = query.message.message_id
+
+    album = dict(get_album(album_id))
+    current_val = str(album.get(field_key) or "")
+    label = _FIELD_LABEL[field_key]
+
+    prompt = await query.message.reply_text(
+        f"✏️ <b>{label}</b>\n"
+        f"Current: <code>{_he(current_val) or '—'}</code>\n\n"
+        f"Send new value:",
+        parse_mode="HTML",
+        reply_markup=ForceReply(
+            selective=True,
+            input_field_placeholder=current_val[:64] if current_val else label,
+        ),
+    )
+    context.user_data["prompt_message_id"] = prompt.message_id
+    return AWAIT_FIELD_VALUE
+
+
+async def receive_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receive the new field value, save it, clean up, and return to the picker."""
+    album_id = context.user_data["editing_album_id"]
+    field_key = context.user_data["editing_field_key"]
+    new_value = update.message.text.strip()
+
+    update_album_ai_fields(album_id, {field_key: new_value})
+
+    # Clean up the ForceReply prompt and the user's reply message
+    for msg_id in (context.user_data.pop("prompt_message_id", None), update.message.message_id):
+        if msg_id:
+            try:
+                await context.bot.delete_message(update.effective_chat.id, msg_id)
+            except Exception:
+                pass
+
+    # Refresh the picker with updated values
+    album = dict(get_album(album_id))
+    picker_msg_id = context.user_data.get("picker_message_id")
+    if picker_msg_id:
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=picker_msg_id,
+            text=_format_picker_text(album_id, album),
+            parse_mode="HTML",
+            reply_markup=_field_picker_keyboard(album_id),
+        )
+
+    return PICK_FIELD
+
+
+async def edit_done_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User tapped Done — restore the full album card with approve/reject buttons."""
+    query = update.callback_query
+    await query.answer()
+
+    album_id = context.user_data.get("editing_album_id") or int(query.data.split(":", 1)[1])
+    album = dict(get_album(album_id))
+    artists = get_album_artists(album_id)
+    tracks = get_tracks_for_album(album_id)
+
+    await query.edit_message_text(
+        _format_album_card(album, artists, len(tracks)),
+        parse_mode="HTML",
+        reply_markup=_review_keyboard(album_id),
+    )
+    return ConversationHandler.END
 
 
 async def receive_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -185,54 +274,20 @@ async def receive_reject_reason(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 
-async def _advance_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, new_value: str | None):
-    album_id = context.user_data["editing_album_id"]
-    idx = context.user_data["edit_field_index"]
-    field_key, _ = EDITABLE_FIELDS[idx]
-
-    if new_value is not None:
-        update_album_ai_fields(album_id, {field_key: new_value})
-
-    idx += 1
-    context.user_data["edit_field_index"] = idx
-
-    if idx >= len(EDITABLE_FIELDS):
-        await update.message.reply_text(
-            f"✏️ Edit complete. Use /approve_{album_id} or /reject_{album_id} to finalise."
-        )
-        return ConversationHandler.END
-
-    field_key, field_label = EDITABLE_FIELDS[idx]
-    album = dict(get_album(album_id))
-    current = album.get(field_key) or "—"
-    await update.message.reply_text(
-        f"**{field_label}** (current: {current})\nSend new value or /skip:"
-    )
-    return EDIT_ALBUM_TYPE + idx
-
-
-async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await _advance_edit(update, context, update.message.text)
-
-
-async def skip_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await _advance_edit(update, context, None)
-
-
 def build_verification_conversation() -> ConversationHandler:
-    field_handlers = [
-        MessageHandler(filters.TEXT & ~filters.COMMAND, edit_field)
-        for _ in EDITABLE_FIELDS
-    ]
-
     return ConversationHandler(
         entry_points=[CallbackQueryHandler(button_callback, pattern=r"^(approve|edit|reject):")],
         states={
-            REJECT_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_reject_reason)],
-            **{EDIT_ALBUM_TYPE + i: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_field),
-                CommandHandler("skip", skip_field),
-            ] for i in range(len(EDITABLE_FIELDS))},
+            PICK_FIELD: [
+                CallbackQueryHandler(field_callback,    pattern=r"^field:"),
+                CallbackQueryHandler(edit_done_callback, pattern=r"^edit_done:"),
+            ],
+            AWAIT_FIELD_VALUE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_field_value),
+            ],
+            REJECT_REASON: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_reject_reason),
+            ],
         },
         fallbacks=[],
         per_chat=True,
