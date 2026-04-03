@@ -207,6 +207,14 @@ def update_track_download(track_id: int, local_path: str):
         )
 
 
+def update_track_name(track_id: int, name: str):
+    with db_conn() as conn:
+        conn.execute(
+            "UPDATE audio_tracks SET track_name_ar=? WHERE id=?",
+            (name, track_id),
+        )
+
+
 def update_track_embedded(track_id: int):
     with db_conn() as conn:
         conn.execute(

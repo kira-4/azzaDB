@@ -12,6 +12,7 @@ from src.database.db import (
     get_tracks_for_album,
     update_album_ai_fields,
     update_track_download,
+    update_track_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,37 +22,42 @@ SESSION_NAME = "old/ret_mes"
 _ILLEGAL_CHARS = r'\/:*?"<>|'
 
 
-def _sanitize(name: str) -> str:
+def _sanitize_dir(name: str) -> str:
+    """Sanitize for use as a directory name — falls back to 'Unknown'."""
     for ch in _ILLEGAL_CHARS:
         name = name.replace(ch, "")
     return name.strip() or "Unknown"
 
 
+def _sanitize_name(name: str) -> str:
+    """Sanitize for use as a filename — no fallback, caller handles empty."""
+    for ch in _ILLEGAL_CHARS:
+        name = name.replace(ch, "")
+    return name.strip()
+
+
 def _primary_artist(artists: list) -> str:
     if not artists:
         return "Unknown Artist"
-    return _sanitize(artists[0]["name_ar"])
+    return _sanitize_dir(artists[0]["name_ar"])
 
 
 def _album_dir(artist_name: str, album_name: str) -> str:
-    return os.path.join(AUDIO_DIR, _sanitize(artist_name), _sanitize(album_name))
+    return os.path.join(AUDIO_DIR, _sanitize_dir(artist_name), _sanitize_dir(album_name))
 
 
-async def _download_to_dir(client: Client, message_id: int, chat_id: int,
-                            dest_dir: str, final_name_no_ext: str) -> str:
-    """Download a media message into dest_dir, rename to final_name_no_ext + original ext."""
+async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
+                           dest_dir: str) -> tuple[str, str]:
+    """Download media into dest_dir. Returns (saved_path, original_stem)."""
     attempt = 0
     while True:
         try:
             message = await client.get_messages(chat_id, message_id)
-            # Save into dir — Hydrogram returns the actual path with original filename/ext
-            tmp_path = await client.download_media(message, file_name=dest_dir + "/")
-            if not tmp_path:
+            saved_path = await client.download_media(message, file_name=dest_dir + "/")
+            if not saved_path:
                 raise ValueError(f"No media in message {message_id}")
-            ext = os.path.splitext(tmp_path)[1]
-            final_path = os.path.join(dest_dir, final_name_no_ext + ext)
-            os.replace(tmp_path, final_path)
-            return final_path
+            stem = os.path.splitext(os.path.basename(saved_path))[0]
+            return saved_path, stem
         except FloodWait as e:
             wait = e.value * (2 ** attempt)
             logger.warning("FloodWait: sleeping %ds (attempt %d)", wait, attempt + 1)
@@ -78,15 +84,13 @@ async def download_album(album_id: int, group_id: int):
         if album.get("cover_message_id") and not album.get("cover_downloaded"):
             cover_dest = os.path.join(album_dir, "cover.jpg")
             try:
-                message = await client.get_messages(group_id, album["cover_message_id"])
-                tmp = await client.download_media(message, file_name=album_dir + "/")
-                if tmp:
-                    os.replace(tmp, cover_dest)
-                    update_album_ai_fields(album_id, {
-                        "cover_local_path": cover_dest,
-                        "cover_downloaded": 1,
-                    })
-                    logger.info("Cover: %s", cover_dest)
+                saved, _ = await _fetch_and_save(client, album["cover_message_id"], group_id, album_dir)
+                os.replace(saved, cover_dest)
+                update_album_ai_fields(album_id, {
+                    "cover_local_path": cover_dest,
+                    "cover_downloaded": 1,
+                })
+                logger.info("Cover: %s", cover_dest)
             except Exception as e:
                 logger.error("Cover download failed for album %d: %s", album_id, e)
 
@@ -96,16 +100,27 @@ async def download_album(album_id: int, group_id: int):
             if track["downloaded"]:
                 continue
             num = track["track_number"] or 0
-            name = _sanitize(track["track_name_ar"] or "")
-            filename = f"{num:02d} - {name}" if name else f"{num:02d}"
 
             try:
-                path = await _download_to_dir(
-                    client, track["message_id"], group_id, album_dir, filename
+                saved_path, telegram_stem = await _fetch_and_save(
+                    client, track["message_id"], group_id, album_dir
                 )
-                update_track_download(track["id"], path)
+                ext = os.path.splitext(saved_path)[1]
+
+                # Use DB name if available, otherwise use Telegram's filename
+                track_name = (track["track_name_ar"] or "").strip()
+                if not track_name:
+                    track_name = telegram_stem
+                    update_track_name(track["id"], track_name)
+
+                safe_name = _sanitize_name(track_name)
+                final_filename = f"{num:02d} - {safe_name}{ext}" if safe_name else f"{num:02d}{ext}"
+                final_path = os.path.join(album_dir, final_filename)
+                os.replace(saved_path, final_path)
+
+                update_track_download(track["id"], final_path)
                 downloaded += 1
-                logger.info("Track: %s", path)
+                logger.info("Track: %s", final_path)
             except Exception as e:
                 logger.error("Track %d download failed: %s", track["id"], e)
 
