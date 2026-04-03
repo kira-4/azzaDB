@@ -59,23 +59,28 @@ def _message_link(group_id: int, message_id: int) -> str:
     return f"https://t.me/c/{channel_id}/{message_id}"
 
 
+def _he(text: str) -> str:
+    """Escape a string for Telegram HTML mode."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _format_album_card(album: dict, artists: list, track_count: int) -> str:
     artist_names = ", ".join(a["name_ar"] for a in artists) if artists else "—"
     confidence_pct = int((album["ai_confidence"] or 0) * 100)
     link = _message_link(album["telegram_group_id"], album["info_message_id"])
     return (
-        f"📋 *NEW ALBUM FOR REVIEW* (ID: {album['id']}) — [source]({link})\n\n"
-        f"📀 Type: {album['album_type'] or '—'}\n"
-        f"🎵 Name: {album['album_name_ar'] or '—'}\n"
-        f"🎤 Artist(s): {artist_names}\n"
+        f"📋 <b>NEW ALBUM FOR REVIEW</b> (ID: {album['id']}) — <a href=\"{link}\">source</a>\n\n"
+        f"📀 Type: {_he(album['album_type'] or '—')}\n"
+        f"🎵 Name: {_he(album['album_name_ar'] or '—')}\n"
+        f"🎤 Artist(s): {_he(artist_names)}\n"
         f"🎶 Tracks: {track_count}\n"
-        f"📅 Date: {_format_date(album)}\n"
-        f"🕌 Occasion: {album['occasion_ar'] or '—'}\n"
-        f"📍 Location: {album['location_ar'] or '—'}\n"
-        f"🎚️ Audio Eng: {album['audio_engineer'] or '—'}\n"
-        f"📝 Notes: {album['notes_ar'] or '—'}\n\n"
+        f"📅 Date: {_he(_format_date(album))}\n"
+        f"🕌 Occasion: {_he(album['occasion_ar'] or '—')}\n"
+        f"📍 Location: {_he(album['location_ar'] or '—')}\n"
+        f"🎚️ Audio Eng: {_he(album['audio_engineer'] or '—')}\n"
+        f"📝 Notes: {_he(album['notes_ar'] or '—')}\n\n"
         f"AI Confidence: {confidence_pct}%\n\n"
-        f"📄 *Original text:*\n```\n{album['raw_text']}\n```"
+        f"📄 <b>Original text:</b>\n<pre>{_he(album['raw_text'] or '')}</pre>"
     )
 
 
@@ -114,7 +119,7 @@ async def send_next_pending(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         VERIFICATION_CHAT_ID,
         text,
-        parse_mode="Markdown",
+        parse_mode="HTML",
         reply_markup=_review_keyboard(album["id"]),
     )
 
@@ -132,8 +137,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         link = _message_link(album["telegram_group_id"], album["info_message_id"])
         approved_by = query.from_user.first_name
         msg = await query.edit_message_text(
-            f"⏳ Album {album_id} approved by {approved_by}. Downloading… [source]({link})",
-            parse_mode="Markdown",
+            f'⏳ Album {album_id} approved by {_he(approved_by)}. Downloading… <a href="{link}">source</a>',
+            parse_mode="HTML",
         )
 
         from src.config import TARGET_GROUP_ID
@@ -144,8 +149,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.edit_message_text(
                 chat_id=msg.chat_id,
                 message_id=msg.message_id,
-                text=f"✅ Album {album_id} approved by {approved_by}. Downloaded. [source]({link})",
-                parse_mode="Markdown",
+                text=f'✅ Album {album_id} approved by {_he(approved_by)}. Downloaded. <a href="{link}">source</a>',
+                parse_mode="HTML",
             )
 
         asyncio.create_task(_download_and_update())
