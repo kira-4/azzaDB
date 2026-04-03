@@ -128,7 +128,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "approve":
         set_album_verification(album_id, "verified", str(query.from_user.id))
-        await query.edit_message_text(f"✅ Album {album_id} approved by {query.from_user.first_name}. Downloading…")
+        album = dict(get_album(album_id))
+        link = _message_link(album["telegram_group_id"], album["info_message_id"])
+        await query.edit_message_text(
+            f"✅ Album {album_id} approved by {query.from_user.first_name}. Downloading… [source]({link})",
+            parse_mode="Markdown",
+        )
 
         from src.config import TARGET_GROUP_ID
         from src.scraper.asset_downloader import download_album
