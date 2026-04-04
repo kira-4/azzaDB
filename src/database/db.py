@@ -364,6 +364,20 @@ def flush_grouper_batch(group_id: int, candidates: list) -> int:
         return albums_created
 
 
+# ─── download helpers ────────────────────────────────────────────────────────
+
+def get_verified_albums_with_missing_tracks() -> list[sqlite3.Row]:
+    """Return verified albums that have at least one undownloaded track."""
+    with db_conn() as conn:
+        return conn.execute(
+            """SELECT DISTINCT a.* FROM albums a
+               JOIN audio_tracks t ON t.album_id = a.id
+               WHERE a.verification_status = 'verified'
+                 AND t.downloaded = 0
+               ORDER BY a.id ASC"""
+        ).fetchall()
+
+
 # ─── ai_extraction_log ────────────────────────────────────────────────────────
 
 def log_ai_extraction(album_id: int, model_version: str, raw_response: str):
