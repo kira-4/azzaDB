@@ -125,7 +125,9 @@ async def cmd_deferred(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for a in albums:
         tracks = get_tracks_for_album(a["id"])
         snippet = (a["raw_text"] or "").split("\n")[0][:60]
-        lines.append(f"• ID {a['id']} ({len(tracks)} tracks) — {snippet}")
+        channel_id = str(abs(a["telegram_group_id"]))[3:]
+        link = f"https://t.me/c/{channel_id}/{a['info_message_id']}"
+        lines.append(f"• ID {a['id']} ({len(tracks)} tracks) [source]({link}) — {snippet}")
     lines.append("\nUse /undefer <id> to return an album to the pre-screen queue.")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
