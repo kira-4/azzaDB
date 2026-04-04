@@ -177,8 +177,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         asyncio.create_task(_download_and_update())
-        from src.bot.handlers.prescreen_handler import send_next_prescreen
-        await send_next_prescreen(context)
+        if get_albums_pending_verification():
+            await send_next_pending(context)
+        else:
+            from src.bot.handlers.prescreen_handler import send_next_prescreen
+            await send_next_prescreen(context)
 
     elif action == "reject":
         context.user_data["rejecting_album_id"] = album_id
@@ -287,8 +290,11 @@ async def receive_reject_reason(update: Update, context: ContextTypes.DEFAULT_TY
     reason = update.message.text
     set_album_verification(album_id, "rejected", str(update.effective_user.id), reason)
     await update.message.reply_text(f"❌ Album {album_id} rejected. Reason recorded.")
-    from src.bot.handlers.prescreen_handler import send_next_prescreen
-    await send_next_prescreen(context)
+    if get_albums_pending_verification():
+        await send_next_pending(context)
+    else:
+        from src.bot.handlers.prescreen_handler import send_next_prescreen
+        await send_next_prescreen(context)
     return ConversationHandler.END
 
 
