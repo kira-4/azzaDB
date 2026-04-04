@@ -105,6 +105,8 @@ All commands are admin-only (controlled by `ADMIN_USER_IDS`).
 | `/undefer <id>` | Return a deferred album to the pre-screen queue |
 | `/retry <id>` | Re-run AI extraction on a specific album |
 | `/export` | Send a CSV of all verified albums |
+| `/failed` | List verified albums with incomplete downloads |
+| `/redownload <id>` | Re-trigger download for a verified album with missing tracks |
 
 ### Pre-screen buttons
 

@@ -143,6 +143,8 @@ GEMINI_API_KEY       # from aistudio.google.com
 - `/undefer <album_id>` — return a deferred album to the pre-screen queue
 - `/retry <album_id>` — re-run AI extraction on a specific album
 - `/export` — send CSV of all verified albums
+- `/failed` — list verified albums with at least one undownloaded track
+- `/redownload <album_id>` — re-trigger download (with live progress) for a verified album with missing tracks
 
 ### verification_status values
 
