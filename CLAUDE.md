@@ -71,6 +71,7 @@ Deferred albums sit at `verification_status = 'deferred'` until retrieved via `/
 azzaDB/
 ├── scrape_history.py
 ├── run_bot.py
+├── fix_track_names.py
 ├── requirements.txt
 ├── data/
 │   └── azzadb.sqlite
@@ -79,6 +80,7 @@ azzaDB/
 │   └── covers/
 └── src/
     ├── config.py
+    ├── log.py
     ├── ai/
     │   ├── gemini_client.py
     │   └── prompts.py
@@ -103,13 +105,15 @@ azzaDB/
 ### File organisation
 
 - `src/config.py` — single source for all env vars and path constants
+- `src/log.py` — colored logging setup; per-service INFO colors (bot=cyan, scraper=green, ai=magenta, pipeline=blue, database=grey); WARNING=yellow, ERROR=bold red; call `setup_logging()` from entry points
 - `src/database/db.py` — all SQL via a `@contextmanager` `db_conn()` that commits/rolls back automatically
 - `src/scraper/message_grouper.py` — state machine: text containing `شريط :` or `إصدار :` starts a new album group
 - `src/ai/gemini_client.py` — uses `google.genai` (not deprecated `google.generativeai`); model: `gemini-2.5-flash`
 - `src/bot/handlers/prescreen_handler.py` — sends `pre_screen` album cards with Defer/Send to AI buttons; "Send to AI" fires a background `asyncio.create_task` and immediately shows the next pre-screen card; bot notifies when extraction completes; `send_next_prescreen()` is called automatically after each approve/reject
 - `src/bot/handlers/verification_handler.py` — PTB `ConversationHandler` for approve/edit/reject flow; `send_album_card(context, album_id)` sends a specific album's card; `send_next_pending()` is used by `/next` for manual queue access
-- `src/scraper/asset_downloader.py` — downloads to `artist/album/` structure; uses Telegram's original filename as track name fallback when `track_name_ar` is null in DB
-- `src/pipeline/metadata_embedder.py` — handles both `.mp3` (via `mutagen.mp3.MP3`) and `.m4a` (via `mutagen.mp4.MP4`); genre is always `لطميات`; Hijri → Gregorian year via `hijri-converter`; artists joined with `"; "`; COMM comment = `occasion_ar | location_ar`
+- `src/scraper/asset_downloader.py` — downloads to `artist/album/` structure; fixes Windows-1256 mojibake in track names (`_fix_encoding`); falls back to `Track NN` if name is still unreadable; uses Telegram's original filename when `track_name_ar` is null
+- `src/pipeline/metadata_embedder.py` — handles both `.mp3` (via `mutagen.mp3.MP3`) and `.m4a` (via `mutagen.mp4.MP4`); genre is always `لطميات`; Hijri → Gregorian year via `hijri-converter`; artists joined with `"; "`; COMM comment = `occasion_ar | location_ar`; falls back to cover art embedded in the audio files when no album cover was downloaded
+- `fix_track_names.py` — one-shot script to repair mojibake track names in already-downloaded albums; fixes DB, renames files on disk, and re-embeds tags; defaults to dry-run, use `--apply` to commit
 
 ### Hydrogram session
 
@@ -120,7 +124,10 @@ azzaDB/
 
 - `ps_ai` (prescreen "Send to AI") optimistically sets `verification_status='pending'` before extraction starts; rolls back to `'pre_screen'` on failure.
 - `asset_downloader.py` handles `FloodWait` with exponential backoff: `wait = flood_wait_value * 2^attempt`, up to 5 retries before raising.
-- Download progress is throttled: speed recalculated every 0.3 s; bot message edited at most every 1.0 s to avoid Telegram rate limits.
+- Download progress is throttled: speed recalculated every 0.3 s; bot message edited at most every 5.0 s to reduce Telegram API pressure.
+- `AIORateLimiter(max_retries=5)` is applied globally to the PTB `Application`; all outgoing bot API calls are rate-limited automatically.
+- `RetryAfter` errors are caught by a global error handler and logged as a single warning line instead of a full traceback.
+- Track name encoding: after download, `_looks_arabic()` checks if the name contains enough Arabic-block characters; if not, `_fix_encoding()` attempts Windows-1256 → Latin-1 re-encoding; if that also fails, the track is named `Track NN`.
 
 ### .env variables
 

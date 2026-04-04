@@ -144,6 +144,7 @@ When `/next` sends a card, three inline buttons appear:
 azzaDB/
 ├── scrape_history.py         # CLI entry point: scrape + group + AI batch
 ├── run_bot.py                # Bot entry point
+├── fix_track_names.py        # One-shot: fix mojibake names in existing albums
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
@@ -156,11 +157,12 @@ azzaDB/
 │   └── covers/               # cover art
 └── src/
     ├── config.py             # all env vars and path constants
+    ├── log.py                # colored logging setup (per-service colors)
     ├── ai/
     │   ├── gemini_client.py  # google.genai; model: gemini-2.5-flash
     │   └── prompts.py
     ├── bot/
-    │   ├── main.py
+    │   ├── main.py           # AIORateLimiter + global RetryAfter error handler
     │   └── handlers/
     │       ├── prescreen_handler.py   # Defer / Send to AI flow
     │       ├── verification_handler.py # Approve / Edit / Reject flow
@@ -170,11 +172,11 @@ azzaDB/
     │   └── models.py         # schema SQL
     ├── pipeline/
     │   ├── album_pipeline.py     # AI extraction orchestrator
-    │   └── metadata_embedder.py  # ID3 (MP3) + MP4 tag writer
+    │   └── metadata_embedder.py  # ID3 (MP3) + MP4 tag writer; cover fallback from audio files
     └── scraper/
         ├── history_scraper.py    # Hydrogram MTProto scraper
         ├── message_grouper.py    # state machine: شريط : / إصدار : triggers new album
-        └── asset_downloader.py   # downloads cover + tracks; FloodWait backoff
+        └── asset_downloader.py   # downloads cover + tracks; mojibake fix; FloodWait backoff
 ```
 
 ---
@@ -186,5 +188,24 @@ azzaDB/
 - **Downloads are non-blocking.** `asyncio.create_task()` runs downloads in the background; the verification queue keeps moving.
 - **WAL mode** on SQLite lets the scraper and the bot share the same database safely.
 - **`run_migrations()`** must be called after `init_db()` on startup. It detects and applies the `pre_screen`/`deferred` status migration for existing databases automatically.
-- **Tracks are named** using the Telegram audio title field first, then `file_name`, then the saved path stem — in that priority order.
+- **Tracks are named** using the Telegram audio title field first, then `file_name`, then the saved path stem. Names with Windows-1256 mojibake are auto-corrected; names that remain unreadable fall back to `Track NN`.
 - **Metadata tags**: genre is hardcoded to `لطميات`; Hijri date is converted to Gregorian year for the TDRC/`©day` tag; artist names are joined with `"; "`.
+- **Cover art**: uses the Telegram cover message if available, otherwise falls back to cover art already embedded in the audio files.
+- **Flood control**: `AIORateLimiter(max_retries=5)` is applied globally; `RetryAfter` errors are caught and logged as a single warning line. Progress message edits are throttled to once every 5 seconds.
+- **Colored logs**: each service prints in a distinct color (bot=cyan, scraper=green, AI=magenta, pipeline=blue, database=grey); warnings are yellow, errors are bold red.
+
+---
+
+## Maintenance Scripts
+
+### Fix mojibake track names in existing albums
+
+If downloaded tracks have garbled filenames (Windows-1256 Arabic bytes misread as Latin-1):
+
+```bash
+# Preview what would change
+docker compose exec bot python fix_track_names.py
+
+# Apply — renames files, updates DB, re-embeds tags
+docker compose exec bot python fix_track_names.py --apply
+```
