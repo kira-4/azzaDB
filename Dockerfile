@@ -13,6 +13,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Pre-create runtime directories so volume mounts have a target even on first run
-RUN mkdir -p data downloads/audio downloads/covers old
+RUN mkdir -p data downloads/audio downloads/covers
 
 CMD ["python", "run_bot.py"]
