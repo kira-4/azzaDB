@@ -93,7 +93,8 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
     album_dir = _album_dir(artist_name, album_name)
     os.makedirs(album_dir, exist_ok=True)
 
-    client = Client(SESSION_NAME, api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH)
+    client = Client(SESSION_NAME, api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH,
+                    max_concurrent_transmissions=4)
     async with client:
         # ── Cover ──────────────────────────────────────────────────────────────
         if album.get("cover_message_id") and not album.get("cover_downloaded"):
