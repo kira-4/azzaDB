@@ -126,7 +126,17 @@ def embed_metadata_for_album(album_id: int) -> int:
             continue
 
         track_num = track["track_number"] or 0
-        title = (track["track_name_ar"] or "").strip() or album_name
+        track_name = (track["track_name_ar"] or "").strip()
+        if not track_name and path.lower().endswith(".mp3"):
+            try:
+                existing = MP3(path)
+                if existing.tags:
+                    tit2 = existing.tags.get("TIT2")
+                    if tit2:
+                        track_name = str(tit2).strip()
+            except Exception:
+                pass
+        title = track_name or album_name
 
         try:
             if path.lower().endswith(".m4a"):
