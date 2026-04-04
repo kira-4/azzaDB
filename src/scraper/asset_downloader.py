@@ -112,28 +112,43 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
         # ── Tracks ─────────────────────────────────────────────────────────────
         pending_tracks = [t for t in tracks if not t["downloaded"]]
         total_tracks = len(pending_tracks)
+
+        # Pre-fetch file sizes so progress can be reported at the album level
+        total_album_bytes = 0
+        if on_progress and pending_tracks:
+            size_msgs = await client.get_messages(group_id, [t["message_id"] for t in pending_tracks])
+            for m in (size_msgs if isinstance(size_msgs, list) else [size_msgs]):
+                if m:
+                    media = getattr(m, "audio", None) or getattr(m, "document", None)
+                    total_album_bytes += getattr(media, "file_size", 0) or 0
+
         downloaded = 0
+        completed_bytes = 0  # bytes from fully finished tracks
         for track_idx, track in enumerate(pending_tracks, 1):
             num = track["track_number"] or 0
             display_name = (track["track_name_ar"] or "").strip() or f"Track {num or track_idx}"
 
             track_progress = None
             if on_progress:
-                # Signal "starting this track" immediately (0/0 means unknown total)
-                await on_progress(track_idx, total_tracks, display_name, 0, 0, 0.0, 0.0)
+                # Signal "starting this track" with album-level offsets
+                await on_progress(track_idx, total_tracks, display_name,
+                                  completed_bytes, total_album_bytes, 0.0, 0.0)
                 _state = [0, time.monotonic()]  # [last_bytes, last_time]
+                _done = completed_bytes
 
                 async def _progress_cb(current, total,
-                                       _idx=track_idx, _name=display_name, _s=_state):
+                                       _idx=track_idx, _name=display_name, _s=_state,
+                                       _prev=_done, _album_total=total_album_bytes):
                     now = time.monotonic()
                     dt = now - _s[1]
                     if dt < 0.3:
                         return
                     speed = (current - _s[0]) / dt if dt > 0 else 0.0
-                    eta = (total - current) / speed if speed > 0 else 0.0
+                    album_current = _prev + current
+                    eta = (_album_total - album_current) / speed if speed > 0 and _album_total > 0 else 0.0
                     _s[0] = current
                     _s[1] = now
-                    await on_progress(_idx, total_tracks, _name, current, total, speed, eta)
+                    await on_progress(_idx, total_tracks, _name, album_current, _album_total, speed, eta)
 
                 track_progress = _progress_cb
 
@@ -155,6 +170,7 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
                 os.replace(saved_path, final_path)
 
                 update_track_download(track["id"], final_path)
+                completed_bytes += os.path.getsize(final_path)
                 downloaded += 1
                 logger.info("Track: %s", final_path)
             except Exception as e:
