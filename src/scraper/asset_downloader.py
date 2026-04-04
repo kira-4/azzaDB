@@ -22,6 +22,27 @@ logger = logging.getLogger(__name__)
 SESSION_NAME = "data/ret_mes"
 
 _ILLEGAL_CHARS = r'\/:*?"<>|'
+_ARABIC_RANGE = range(0x0600, 0x06FF + 1)
+
+
+def _looks_arabic(text: str) -> bool:
+    """Return True if text contains enough Arabic-block characters to be readable."""
+    arabic_chars = sum(1 for ch in text if ord(ch) in _ARABIC_RANGE)
+    return arabic_chars >= max(1, len(text) // 4)
+
+
+def _fix_encoding(name: str) -> str | None:
+    """
+    Attempt to fix Windows-1256 mojibake (Arabic bytes read as Latin-1).
+    Returns the corrected string if it looks like readable Arabic, else None.
+    """
+    try:
+        fixed = name.encode("latin-1").decode("windows-1256")
+        if _looks_arabic(fixed):
+            return fixed
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    return None
 
 
 def _sanitize_dir(name: str) -> str:
@@ -174,6 +195,17 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
                 if not track_name:
                     track_name = telegram_stem
                     update_track_name(track["id"], track_name)
+
+                # Fix Windows-1256 mojibake (Arabic bytes misread as Latin-1)
+                if track_name and not _looks_arabic(track_name):
+                    fixed = _fix_encoding(track_name)
+                    if fixed:
+                        track_name = fixed
+                        update_track_name(track["id"], track_name)
+                    else:
+                        # Still unreadable — fall back to positional name
+                        track_name = f"Track {track_idx:02d}"
+                        update_track_name(track["id"], track_name)
 
                 safe_name = _sanitize_name(track_name)
                 final_filename = f"{num:02d} - {safe_name}{ext}" if safe_name else f"{num:02d}{ext}"
