@@ -4,17 +4,13 @@ CLI: Run the human verification bot.
 Usage:
     python run_bot.py
 """
-import logging
 import sys
 import os
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    level=logging.INFO,
-)
-logging.getLogger("httpx").setLevel(logging.WARNING)
+from src.log import setup_logging
+setup_logging()
 
 from src.database.db import init_db, run_migrations
 from src.bot.main import run

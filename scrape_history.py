@@ -13,10 +13,8 @@ import os
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    level=logging.INFO,
-)
+from src.log import setup_logging
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
