@@ -10,6 +10,7 @@ import asyncio
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
 from src.config import VERIFICATION_CHAT_ID
@@ -107,7 +108,10 @@ async def prescreen_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if action == "ps_defer":
         update_album_ai_fields(album_id, {"verification_status": "deferred"})
-        await query.edit_message_text(f"⏭️ Album {album_id} deferred.")
+        try:
+            await query.edit_message_text(f"⏭️ Album {album_id} deferred.")
+        except BadRequest:
+            pass
         await send_next_prescreen(context)
 
     elif action == "ps_ai":
