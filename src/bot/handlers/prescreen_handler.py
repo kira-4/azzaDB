@@ -68,7 +68,13 @@ async def send_next_prescreen(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def _extract_in_background(context: ContextTypes.DEFAULT_TYPE, album_id: int, raw_text: str):
+async def _extract_in_background(
+    context: ContextTypes.DEFAULT_TYPE,
+    album_id: int,
+    raw_text: str,
+    chat_id: int,
+    message_id: int,
+):
     try:
         result = await extract_metadata(album_id, raw_text)
         for name in result.artists:
@@ -76,15 +82,18 @@ async def _extract_in_background(context: ContextTypes.DEFAULT_TYPE, album_id: i
             if name:
                 artist_id = get_or_create_artist(name)
                 link_album_artist(album_id, artist_id)
-        await context.bot.send_message(
-            VERIFICATION_CHAT_ID,
-            f"✅ Album {album_id} ready for review (confidence: {int(result.confidence * 100)}%). Use /next.",
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"✅ Album {album_id} ready for review (confidence: {int(result.confidence * 100)}%). Use /next.",
         )
     except Exception as e:
         logger.error("Background AI extraction failed for album %d: %s", album_id, e)
-        await context.bot.send_message(
-            VERIFICATION_CHAT_ID,
-            f"❌ AI extraction failed for album {album_id}: {_he(str(e))}",
+        update_album_ai_fields(album_id, {"verification_status": "pre_screen"})
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"❌ AI extraction failed for album {album_id}: {_he(str(e))} — returned to pre-screen queue.",
         )
 
 
@@ -102,8 +111,11 @@ async def prescreen_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await send_next_prescreen(context)
 
     elif action == "ps_ai":
+        update_album_ai_fields(album_id, {"verification_status": "pending"})
+        chat_id = query.message.chat_id
+        msg_id = query.message.message_id
         await query.edit_message_text(f"🤖 Album {album_id} queued for AI extraction.")
-        asyncio.create_task(_extract_in_background(context, album_id, album["raw_text"]))
+        asyncio.create_task(_extract_in_background(context, album_id, album["raw_text"], chat_id, msg_id))
         await send_next_prescreen(context)
 
 
