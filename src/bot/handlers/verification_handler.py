@@ -13,6 +13,7 @@ import time
 from datetime import datetime
 
 from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import RetryAfter
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -224,6 +225,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text=text,
                         parse_mode="HTML",
                     )
+                except RetryAfter as e:
+                    # Push _last_edit forward so we stay quiet during the flood window
+                    _last_edit[0] = time.monotonic() + e.retry_after
                 except Exception:
                     pass
 
@@ -263,12 +267,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f'\n<a href="{link}">source</a>',
             ]
 
-            await context.bot.edit_message_text(
-                chat_id=msg.chat_id,
-                message_id=msg.message_id,
-                text="\n".join(lines),
-                parse_mode="HTML",
-            )
+            final_text = "\n".join(lines)
+            for _attempt in range(5):
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=msg.chat_id,
+                        message_id=msg.message_id,
+                        text=final_text,
+                        parse_mode="HTML",
+                    )
+                    break
+                except RetryAfter as e:
+                    await asyncio.sleep(e.retry_after + 1)
+                except Exception:
+                    break
 
         asyncio.create_task(_download_and_update())
         if get_albums_pending_verification():
