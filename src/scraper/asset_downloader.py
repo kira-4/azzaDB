@@ -61,7 +61,7 @@ async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
             media = getattr(message, "audio", None) or getattr(message, "document", None)
             original_name = None
             if media:
-                original_name = getattr(media, "file_name", None) or getattr(media, "title", None)
+                original_name = getattr(media, "title", None) or getattr(media, "file_name", None)
             stem = (
                 os.path.splitext(original_name)[0]
                 if original_name
