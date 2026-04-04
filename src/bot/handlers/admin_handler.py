@@ -8,6 +8,7 @@ from telegram.ext import CommandHandler, ContextTypes
 from src.config import ADMIN_USER_IDS
 from src.database.db import (
     get_album,
+    get_album_artists,
     get_albums_deferred,
     get_albums_pending_ai,
     get_tracks_for_album,
@@ -198,28 +199,110 @@ async def cmd_redownload(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     import asyncio
+    import time
+    from telegram.error import RetryAfter
     from src.config import TARGET_GROUP_ID
     from src.scraper.asset_downloader import download_album
-    from src.pipeline.metadata_embedder import embed_metadata_for_album
+    from src.bot.handlers.verification_handler import (
+        _he, _format_size, _format_speed, _format_eta, _format_date, _message_link,
+    )
 
-    msg = await update.message.reply_text(f"⏳ Re-downloading album {album_id}…")
+    album = dict(album)
+    link = _message_link(album["telegram_group_id"], album["info_message_id"])
+    msg = await update.message.reply_text(
+        f'⏳ Re-downloading album {album_id}… <a href="{link}">source</a>',
+        parse_mode="HTML",
+    )
 
     async def _do_download():
-        try:
-            downloaded, total_bytes = await download_album(album_id, TARGET_GROUP_ID)
-            tracks = get_tracks_for_album(album_id)
-            await context.bot.edit_message_text(
-                chat_id=msg.chat_id,
-                message_id=msg.message_id,
-                text=f"✅ Album {album_id}: {downloaded}/{len(tracks)} tracks downloaded.",
+        _last_edit = [0.0]
+
+        async def on_progress(track_idx, total_tracks, track_name,
+                              current_bytes, total_bytes, speed_bps, eta_secs):
+            now = time.monotonic()
+            if now - _last_edit[0] < 1.0:
+                return
+            _last_edit[0] = now
+            if total_bytes > 0 and current_bytes > 0:
+                pct = int(current_bytes / total_bytes * 100)
+                progress_line = f"↓ {pct}% · {_format_speed(speed_bps)} · ETA {_format_eta(eta_secs)}"
+            else:
+                progress_line = "↓ Starting…"
+            text = (
+                f'⏳ Re-downloading album {album_id}…\n\n'
+                f'📥 {_he(track_name)} ({track_idx}/{total_tracks})\n'
+                f'{progress_line}\n\n'
+                f'<a href="{link}">source</a>'
             )
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=msg.chat_id, message_id=msg.message_id,
+                    text=text, parse_mode="HTML",
+                )
+            except RetryAfter as e:
+                _last_edit[0] = time.monotonic() + e.retry_after
+            except Exception:
+                pass
+
+        try:
+            start_time = time.monotonic()
+            downloaded, total_bytes = await download_album(album_id, TARGET_GROUP_ID, on_progress=on_progress)
+            elapsed = time.monotonic() - start_time
+
+            artists = get_album_artists(album_id)
+            tracks = get_tracks_for_album(album_id)
+
+            artist_str = ", ".join(_he(a["name_ar"]) for a in artists) if artists else "—"
+            name_str   = _he(album.get("album_name_ar") or "—")
+            type_str   = _he(album.get("album_type") or "")
+            heading    = f"{type_str}: {name_str}" if type_str else name_str
+
+            date_str  = _format_date(album)
+            occasion  = _he(album.get("occasion_ar") or "")
+            meta_line = " · ".join(p for p in [
+                (f"📅 {date_str}" if date_str != "—" else None),
+                (f"🕌 {occasion}"  if occasion           else None),
+            ] if p)
+
+            size_str    = _format_size(total_bytes) if total_bytes > 0 else "—"
+            elapsed_str = _format_eta(int(elapsed))
+            avg_speed   = _format_speed(total_bytes / elapsed) if elapsed > 0 and total_bytes > 0 else "—"
+
+            lines = [
+                f"✅ <b>Album {album_id}</b> re-downloaded.\n",
+                f"📀 {heading}",
+                f"🎤 {artist_str}",
+                f"🎶 {downloaded}/{len(tracks)} tracks · {size_str}",
+            ]
+            if meta_line:
+                lines.append(meta_line)
+            lines += [
+                f"\n⏱ {elapsed_str}  ·  ↓ avg {avg_speed}",
+                f'\n<a href="{link}">source</a>',
+            ]
+
+            final_text = "\n".join(lines)
+            for _attempt in range(5):
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=msg.chat_id, message_id=msg.message_id,
+                        text=final_text, parse_mode="HTML",
+                    )
+                    break
+                except RetryAfter as e:
+                    await asyncio.sleep(e.retry_after + 1)
+                except Exception:
+                    break
+
         except Exception as e:
             logger.error("Redownload failed for album %d: %s", album_id, e)
-            await context.bot.edit_message_text(
-                chat_id=msg.chat_id,
-                message_id=msg.message_id,
-                text=f"❌ Redownload failed for album {album_id}: {e}",
-            )
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=msg.chat_id, message_id=msg.message_id,
+                    text=f"❌ Redownload failed for album {album_id}: {e}",
+                )
+            except Exception:
+                pass
 
     asyncio.create_task(_do_download())
 
