@@ -183,4 +183,4 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
         embedded = embed_metadata_for_album(album_id)
         logger.info("Album %d: embedded metadata for %d tracks", album_id, embedded)
 
-    return downloaded
+    return downloaded, completed_bytes

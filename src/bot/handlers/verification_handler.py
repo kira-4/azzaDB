@@ -85,6 +85,14 @@ def _format_date(album: dict) -> str:
     return " ".join(parts) if parts else "—"
 
 
+def _format_size(b: int) -> str:
+    if b < 1024:
+        return f"{b} B"
+    if b < 1024 * 1024:
+        return f"{b / 1024:.1f} KB"
+    return f"{b / 1024 / 1024:.1f} MB"
+
+
 def _format_speed(bps: float) -> str:
     if bps < 1024:
         return f"{bps:.0f} B/s"
@@ -219,11 +227,46 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-            await download_album(album_id, TARGET_GROUP_ID, on_progress=on_progress)
+            start_time = time.monotonic()
+            downloaded, total_bytes = await download_album(album_id, TARGET_GROUP_ID, on_progress=on_progress)
+            elapsed = time.monotonic() - start_time
+
+            artists = get_album_artists(album_id)
+            tracks  = get_tracks_for_album(album_id)
+
+            artist_str  = ", ".join(_he(a["name_ar"]) for a in artists) if artists else "—"
+            name_str    = _he(album.get("album_name_ar") or "—")
+            type_str    = _he(album.get("album_type") or "")
+            heading     = f"{type_str}: {name_str}" if type_str else name_str
+
+            date_str    = _format_date(album)
+            occasion    = _he(album.get("occasion_ar") or "")
+            meta_line   = " · ".join(p for p in [
+                (f"📅 {date_str}" if date_str != "—" else None),
+                (f"🕌 {occasion}"  if occasion           else None),
+            ] if p)
+
+            size_str    = _format_size(total_bytes) if total_bytes > 0 else "—"
+            elapsed_str = _format_eta(int(elapsed))
+            avg_speed   = _format_speed(total_bytes / elapsed) if elapsed > 0 and total_bytes > 0 else "—"
+
+            lines = [
+                f"✅ <b>Album {album_id}</b> approved by {_he(approved_by)}.\n",
+                f"📀 {heading}",
+                f"🎤 {artist_str}",
+                f"🎶 {downloaded}/{len(tracks)} tracks · {size_str}",
+            ]
+            if meta_line:
+                lines.append(meta_line)
+            lines += [
+                f"\n⏱ {elapsed_str}  ·  ↓ avg {avg_speed}",
+                f'\n<a href="{link}">source</a>',
+            ]
+
             await context.bot.edit_message_text(
                 chat_id=msg.chat_id,
                 message_id=msg.message_id,
-                text=f'✅ Album {album_id} approved by {_he(approved_by)}. Downloaded. <a href="{link}">source</a>',
+                text="\n".join(lines),
                 parse_mode="HTML",
             )
 
