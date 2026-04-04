@@ -323,6 +323,47 @@ def update_track_embedded(track_id: int):
         )
 
 
+# ─── grouper batch write ──────────────────────────────────────────────────────
+
+def flush_grouper_batch(group_id: int, candidates: list) -> int:
+    """Write all AlbumCandidates to DB in a single transaction.
+    Returns the number of albums inserted."""
+    with db_conn() as conn:
+        albums_created = 0
+        for candidate in candidates:
+            cur = conn.execute(
+                """INSERT INTO albums (info_message_id, cover_message_id, telegram_group_id, raw_text)
+                   VALUES (?, ?, ?, ?)""",
+                (candidate.info_message_id, candidate.cover_message_id, group_id, candidate.raw_text),
+            )
+            album_id = cur.lastrowid
+            albums_created += 1
+
+            conn.execute(
+                "UPDATE raw_messages SET processed=1, album_id=? WHERE message_id=?",
+                (album_id, candidate.info_message_id),
+            )
+            if candidate.cover_message_id:
+                conn.execute(
+                    "UPDATE raw_messages SET processed=1, album_id=? WHERE message_id=?",
+                    (album_id, candidate.cover_message_id),
+                )
+            for i, track in enumerate(candidate.audio_messages, start=1):
+                conn.execute(
+                    """INSERT INTO audio_tracks
+                       (album_id, message_id, track_number, duration_seconds,
+                        file_size_bytes, mime_type, telegram_file_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (album_id, track["message_id"], i, track.get("duration_seconds"),
+                     track.get("file_size_bytes"), track.get("mime_type"), track.get("file_id")),
+                )
+                conn.execute(
+                    "UPDATE raw_messages SET processed=1, album_id=? WHERE message_id=?",
+                    (album_id, track["message_id"]),
+                )
+        return albums_created
+
+
 # ─── ai_extraction_log ────────────────────────────────────────────────────────
 
 def log_ai_extraction(album_id: int, model_version: str, raw_response: str):
