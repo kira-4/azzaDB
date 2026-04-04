@@ -67,8 +67,12 @@ async def scrape_full_history(group_id: int, limit: int = 0):
             else:
                 skipped += 1
 
-            if (inserted + skipped) % 500 == 0:
-                logger.info("Progress: %d inserted, %d skipped", inserted, skipped)
+            if (inserted + skipped) % 100 == 0:
+                date_str = date.strftime("%Y-%m-%d") if date else "unknown"
+                logger.info(
+                    "Progress: %d inserted, %d skipped | current message date: %s",
+                    inserted, skipped, date_str,
+                )
 
     logger.info("Done. Inserted: %d, Skipped (already in DB): %d", inserted, skipped)
     return inserted, skipped
