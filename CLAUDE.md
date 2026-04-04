@@ -106,7 +106,18 @@ azzaDB/
 - `src/bot/handlers/prescreen_handler.py` — sends `pre_screen` album cards with Defer/Send to AI buttons; "Send to AI" fires a background `asyncio.create_task` and immediately shows the next pre-screen card; bot notifies when extraction completes; `send_next_prescreen()` is called automatically after each approve/reject
 - `src/bot/handlers/verification_handler.py` — PTB `ConversationHandler` for approve/edit/reject flow; `send_album_card(context, album_id)` sends a specific album's card; `send_next_pending()` is used by `/next` for manual queue access
 - `src/scraper/asset_downloader.py` — downloads to `artist/album/` structure; uses Telegram's original filename as track name fallback when `track_name_ar` is null in DB
-- `src/pipeline/metadata_embedder.py` — uses `mutagen.mp3.MP3` (not raw `ID3`) for MP3 tagging; genre is always `لطميات`; Hijri date is converted to Gregorian year via `hijri-converter`
+- `src/pipeline/metadata_embedder.py` — handles both `.mp3` (via `mutagen.mp3.MP3`) and `.m4a` (via `mutagen.mp4.MP4`); genre is always `لطميات`; Hijri → Gregorian year via `hijri-converter`; artists joined with `"; "`; COMM comment = `occasion_ar | location_ar`
+
+### Hydrogram session
+
+- Session file: `old/ret_mes.session` (relative to project root). First run prompts for phone + OTP; subsequent runs reuse the session silently.
+- `hydrogram[fast]` extras install TgCrypto (C-accelerated MTProto crypto) and uvloop (faster event loop) — required for production performance.
+
+### Subtle behaviours
+
+- `ps_ai` (prescreen "Send to AI") optimistically sets `verification_status='pending'` before extraction starts; rolls back to `'pre_screen'` on failure.
+- `asset_downloader.py` handles `FloodWait` with exponential backoff: `wait = flood_wait_value * 2^attempt`, up to 5 retries before raising.
+- Download progress is throttled: speed recalculated every 0.3 s; bot message edited at most every 1.0 s to avoid Telegram rate limits.
 
 ### .env variables
 
