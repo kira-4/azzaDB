@@ -8,29 +8,22 @@ It scrapes raw messages via the Telegram MTProto API, groups them into albums, s
 
 ## Prerequisites
 
-- Python 3.11+
+- Docker + Docker Compose
 - A Telegram account (for the MTProto scraper)
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - A Google Gemini API key (from [aistudio.google.com](https://aistudio.google.com))
 
 ---
 
-## Installation
+## Setup
+
+### 1. Configure environment
 
 ```bash
-git clone <repo-url>
-cd azzaDB
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+cp .env.example .env
 ```
 
-> `hydrogram[fast]` is included in requirements. It installs TgCrypto (C-accelerated MTProto crypto) and uvloop (faster async event loop) automatically.
-
----
-
-## Configuration
-
-Copy `.env.example` to `.env` and fill in the values:
+Fill in `.env`:
 
 ```env
 TELEGRAM_API_ID=          # from https://my.telegram.org
@@ -40,23 +33,48 @@ TELEGRAM_BOT_TOKEN=       # from @BotFather
 VERIFICATION_CHAT_ID=     # your personal Telegram user ID (not a bot ID)
 ADMIN_USER_IDS=           # comma-separated user IDs, e.g. 123456,789012
 GEMINI_API_KEY=           # from aistudio.google.com
+
+# Optional: host path where audio files will be stored (default: ./downloads)
+# DOWNLOADS_PATH=/media/archive/latmyaat
 ```
 
-### First-time Hydrogram authentication
-
-The scraper uses a Hydrogram (MTProto) user client. On the very first run it will prompt for your phone number and a login code:
+### 2. Build and start the bot
 
 ```bash
-python scrape_history.py --limit 1
+docker compose up -d --build
 ```
 
-This creates `old/ret_mes.session`. All subsequent runs reuse it silently.
+### 3. Authenticate Hydrogram (first time only)
+
+The scraper uses a Telegram user client (MTProto). The first run prompts for your phone number and a login code:
+
+```bash
+docker compose exec bot python scrape_history.py --limit 1
+```
+
+This creates `data/ret_mes.session`. All subsequent runs reuse it silently.
+
+---
+
+## Running the scraper
+
+```bash
+# Scrape the full group history and group into albums
+docker compose exec bot python scrape_history.py
+
+# Scrape only the N most recent messages
+docker compose exec bot python scrape_history.py --limit 400
+
+# Re-run the grouper on already-scraped messages (no Telegram connection)
+docker compose exec bot python scrape_history.py --skip-scrape
+
+# Run AI extraction batch on all un-extracted albums
+docker compose exec bot python scrape_history.py --skip-scrape --skip-group --ai
+```
 
 ---
 
 ## Pipeline
-
-The pipeline has three stages that can be run independently:
 
 ```
 raw_messages → (grouper) → albums (pre_screen)
@@ -70,33 +88,6 @@ raw_messages → (grouper) → albums (pre_screen)
                          asset_downloader → downloads/audio/{artist}/{album}/
                                   ↓
                          metadata_embedder → ID3/MP4 tags written into files
-```
-
----
-
-## CLI Commands
-
-### `scrape_history.py`
-
-```bash
-# Full run: scrape latest N messages, then group into albums
-python scrape_history.py --limit 400
-
-# Scrape only, skip grouping
-python scrape_history.py --limit 400 --skip-group
-
-# Re-run grouper on already-scraped messages (no Telegram connection needed)
-python scrape_history.py --skip-scrape
-
-# Run AI extraction batch on all un-extracted albums (no scrape, no group)
-python scrape_history.py --skip-scrape --skip-group --ai
-```
-
-### `run_bot.py`
-
-```bash
-# Start the verification bot (persistent process)
-python run_bot.py
 ```
 
 ---
@@ -151,10 +142,13 @@ When `/next` sends a card, three inline buttons appear:
 azzaDB/
 ├── scrape_history.py         # CLI entry point: scrape + group + AI batch
 ├── run_bot.py                # Bot entry point
+├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
 ├── .env                      # secrets (gitignored)
 ├── data/
-│   └── azzadb.sqlite         # SQLite DB (WAL mode)
+│   ├── azzadb.sqlite         # SQLite DB (WAL mode)
+│   └── ret_mes.session       # Hydrogram session (created on first scraper run)
 ├── downloads/
 │   ├── audio/                # downloaded tracks: audio/{artist}/{album}/
 │   └── covers/               # cover art

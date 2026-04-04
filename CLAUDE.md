@@ -9,23 +9,26 @@ azzaDB is a pipeline for archiving Shia latmyaat (Islamic audio recordings) from
 ## Commands
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Build and start the bot
+docker compose up -d --build
 
-# Initialise DB + scrape latest N messages + group into albums
-python scrape_history.py --limit 400
+# First-time Hydrogram auth (interactive, once only)
+docker compose exec bot python scrape_history.py --limit 1
+
+# Scrape full group history and group into albums
+docker compose exec bot python scrape_history.py
+
+# Scrape only the N most recent messages
+docker compose exec bot python scrape_history.py --limit 400
 
 # Scrape only (skip grouping)
-python scrape_history.py --limit 400 --skip-group
+docker compose exec bot python scrape_history.py --limit 400 --skip-group
 
 # Re-run grouper on already-scraped messages (no Telegram connection needed)
-python scrape_history.py --skip-scrape
+docker compose exec bot python scrape_history.py --skip-scrape
 
 # Run AI extraction batch on all un-extracted albums
-python scrape_history.py --skip-scrape --skip-group --ai
-
-# Start the verification bot
-python run_bot.py
+docker compose exec bot python scrape_history.py --skip-scrape --skip-group --ai
 ```
 
 ## Architecture
