@@ -110,7 +110,7 @@ azzaDB/
 
 ### Hydrogram session
 
-- Session file: `old/ret_mes.session` (relative to project root). First run prompts for phone + OTP; subsequent runs reuse the session silently.
+- Session file: `data/ret_mes.session` (relative to project root). First run prompts for phone + OTP; subsequent runs reuse the session silently.
 - `hydrogram[fast]` extras install TgCrypto (C-accelerated MTProto crypto) and uvloop (faster event loop) — required for production performance.
 
 ### Subtle behaviours

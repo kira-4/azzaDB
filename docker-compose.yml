@@ -1,0 +1,13 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Persists the SQLite database across container rebuilds
+      - ./data:/app/data
+      # Download path — set DOWNLOADS_PATH in .env (or export it) to point
+      # at wherever you want audio files stored on the host, e.g.:
+      #   DOWNLOADS_PATH=/media/archive/latmyaat
+      # Defaults to ./downloads next to this file if unset.
+      - ${DOWNLOADS_PATH:-./downloads}:/app/downloads
