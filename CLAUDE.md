@@ -103,7 +103,7 @@ azzaDB/
 - `src/database/db.py` — all SQL via a `@contextmanager` `db_conn()` that commits/rolls back automatically
 - `src/scraper/message_grouper.py` — state machine: text containing `شريط :` or `إصدار :` starts a new album group
 - `src/ai/gemini_client.py` — uses `google.genai` (not deprecated `google.generativeai`); model: `gemini-2.5-flash`
-- `src/bot/handlers/prescreen_handler.py` — sends `pre_screen` album cards with Defer/Send to AI buttons; `send_next_prescreen()` is called automatically after each approve/reject
+- `src/bot/handlers/prescreen_handler.py` — sends `pre_screen` album cards with Defer/Send to AI buttons; "Send to AI" fires a background `asyncio.create_task` and immediately shows the next pre-screen card; bot notifies when extraction completes; `send_next_prescreen()` is called automatically after each approve/reject
 - `src/bot/handlers/verification_handler.py` — PTB `ConversationHandler` for approve/edit/reject flow; `send_album_card(context, album_id)` sends a specific album's card; `send_next_pending()` is used by `/next` for manual queue access
 - `src/scraper/asset_downloader.py` — downloads to `artist/album/` structure; uses Telegram's original filename as track name fallback when `track_name_ar` is null in DB
 - `src/pipeline/metadata_embedder.py` — uses `mutagen.mp3.MP3` (not raw `ID3`) for MP3 tagging; genre is always `لطميات`; Hijri date is converted to Gregorian year via `hijri-converter`

@@ -1,9 +1,12 @@
 """
 Pre-screen flow:
   1. Bot sends raw message + Telegram link with [Defer] [Send to AI] buttons.
-  2. Defer  → verification_status = 'deferred', auto-send next pre-screen card.
-  3. Send to AI → blocking Gemini extraction → immediately show verification card.
+  2. Defer     → verification_status = 'deferred', auto-send next pre-screen card.
+  3. Send to AI → fires background Gemini extraction, immediately shows next
+                  pre-screen card. Bot sends a notification when extraction
+                  completes; use /next to review the result.
 """
+import asyncio
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -65,6 +68,26 @@ async def send_next_prescreen(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _extract_in_background(context: ContextTypes.DEFAULT_TYPE, album_id: int, raw_text: str):
+    try:
+        result = await extract_metadata(album_id, raw_text)
+        for name in result.artists:
+            name = name.strip()
+            if name:
+                artist_id = get_or_create_artist(name)
+                link_album_artist(album_id, artist_id)
+        await context.bot.send_message(
+            VERIFICATION_CHAT_ID,
+            f"✅ Album {album_id} ready for review (confidence: {int(result.confidence * 100)}%). Use /next.",
+        )
+    except Exception as e:
+        logger.error("Background AI extraction failed for album %d: %s", album_id, e)
+        await context.bot.send_message(
+            VERIFICATION_CHAT_ID,
+            f"❌ AI extraction failed for album {album_id}: {_he(str(e))}",
+        )
+
+
 async def prescreen_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -79,31 +102,9 @@ async def prescreen_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await send_next_prescreen(context)
 
     elif action == "ps_ai":
-        await query.edit_message_text(
-            f"⏳ Sending album {album_id} to AI…",
-            parse_mode="HTML",
-        )
-        try:
-            result = await extract_metadata(album_id, album["raw_text"])
-            for name in result.artists:
-                name = name.strip()
-                if name:
-                    artist_id = get_or_create_artist(name)
-                    link_album_artist(album_id, artist_id)
-
-            await query.edit_message_text(
-                f"✅ AI extracted album {album_id} (confidence: {int(result.confidence * 100)}%). Sending for verification…",
-                parse_mode="HTML",
-            )
-            from src.bot.handlers.verification_handler import send_album_card
-            await send_album_card(context, album_id)
-
-        except Exception as e:
-            logger.error("AI extraction failed for album %d: %s", album_id, e)
-            await query.edit_message_text(
-                f"❌ AI extraction failed for album {album_id}: {_he(str(e))}",
-                parse_mode="HTML",
-            )
+        await query.edit_message_text(f"🤖 Album {album_id} queued for AI extraction.")
+        asyncio.create_task(_extract_in_background(context, album_id, album["raw_text"]))
+        await send_next_prescreen(context)
 
 
 def build_prescreen_handler() -> CallbackQueryHandler:
