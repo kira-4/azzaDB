@@ -200,7 +200,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             async def on_progress(track_idx, total_tracks, track_name,
                                   current_bytes, total_bytes, speed_bps, eta_secs):
                 now = time.monotonic()
-                if now - _last_edit[0] < 1.0:
+                if now - _last_edit[0] < 5.0:
                     return
                 _last_edit[0] = now
 
