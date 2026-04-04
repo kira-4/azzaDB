@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import shutil
 import time
 
 from hydrogram import Client
@@ -96,6 +97,23 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
     client = Client(SESSION_NAME, api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH,
                     max_concurrent_transmissions=4)
     async with client:
+        # ── Disk space pre-check ───────────────────────────────────────────────
+        pending_tracks = get_tracks_for_album(album_id)
+        pending_tracks = [t for t in pending_tracks if not t["downloaded"]]
+        if pending_tracks:
+            size_msgs = await client.get_messages(group_id, [t["message_id"] for t in pending_tracks])
+            needed = sum(
+                getattr(getattr(m, "audio", None) or getattr(m, "document", None), "file_size", 0) or 0
+                for m in (size_msgs if isinstance(size_msgs, list) else [size_msgs])
+                if m
+            )
+            free = shutil.disk_usage(AUDIO_DIR).free
+            if needed > 0 and free < needed * 1.05:  # 5% headroom
+                raise OSError(
+                    f"Not enough disk space for album {album_id}: "
+                    f"need {needed / 1024**2:.1f} MB, free {free / 1024**2:.1f} MB"
+                )
+
         # ── Cover ──────────────────────────────────────────────────────────────
         if album.get("cover_message_id") and not album.get("cover_downloaded"):
             cover_dest = os.path.join(album_dir, "cover.jpg")
@@ -111,17 +129,9 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
                 logger.error("Cover download failed for album %d: %s", album_id, e)
 
         # ── Tracks ─────────────────────────────────────────────────────────────
-        pending_tracks = [t for t in tracks if not t["downloaded"]]
         total_tracks = len(pending_tracks)
-
-        # Pre-fetch file sizes so progress can be reported at the album level
-        total_album_bytes = 0
-        if on_progress and pending_tracks:
-            size_msgs = await client.get_messages(group_id, [t["message_id"] for t in pending_tracks])
-            for m in (size_msgs if isinstance(size_msgs, list) else [size_msgs]):
-                if m:
-                    media = getattr(m, "audio", None) or getattr(m, "document", None)
-                    total_album_bytes += getattr(media, "file_size", 0) or 0
+        # total_album_bytes already computed by the disk-space pre-check above
+        total_album_bytes = needed if pending_tracks else 0
 
         downloaded = 0
         completed_bytes = 0  # bytes from fully finished tracks
