@@ -21,11 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 async def main(skip_scrape: bool, skip_group: bool, run_ai: bool, limit: int):
-    from src.database.db import init_db
+    from src.database.db import init_db, run_migrations
     from src.config import TARGET_GROUP_ID
 
     logger.info("Initialising database…")
     init_db()
+    run_migrations()
 
     if not skip_scrape:
         from src.scraper.history_scraper import scrape_full_history

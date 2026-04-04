@@ -1,7 +1,10 @@
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from src.config import DATABASE_PATH
 from src.database.models import SCHEMA_SQL
@@ -31,6 +34,65 @@ def db_conn():
 def init_db():
     with db_conn() as conn:
         conn.executescript(SCHEMA_SQL)
+
+
+def run_migrations():
+    """Apply pending schema migrations to an existing database."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='albums'"
+        ).fetchone()
+        if not row or 'pre_screen' in row[0]:
+            return  # fresh install or already migrated
+
+        logger.info("DB migration: expanding verification_status CHECK constraint")
+        conn.executescript("""
+            PRAGMA foreign_keys=OFF;
+            BEGIN;
+            CREATE TABLE albums_new (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                info_message_id      INTEGER NOT NULL UNIQUE,
+                cover_message_id     INTEGER,
+                telegram_group_id    INTEGER NOT NULL,
+                raw_text             TEXT NOT NULL,
+                album_type           TEXT,
+                album_name_ar        TEXT,
+                occasion_ar          TEXT,
+                hijri_date           TEXT,
+                hijri_month          TEXT,
+                hijri_day            TEXT,
+                location_ar          TEXT,
+                city_ar              TEXT,
+                audio_engineer       TEXT,
+                recording_engineer   TEXT,
+                notes_ar             TEXT,
+                cover_local_path     TEXT,
+                cover_downloaded     BOOLEAN DEFAULT 0,
+                ai_extracted         BOOLEAN DEFAULT 0,
+                ai_confidence        REAL,
+                verification_status  TEXT DEFAULT 'pre_screen'
+                                     CHECK(verification_status IN ('pre_screen','pending','verified','rejected','needs_review','deferred')),
+                verified_by          TEXT,
+                verified_at          DATETIME,
+                rejection_reason     TEXT,
+                all_audio_downloaded BOOLEAN DEFAULT 0,
+                all_audio_embedded   BOOLEAN DEFAULT 0,
+                created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO albums_new SELECT * FROM albums;
+            UPDATE albums_new
+               SET verification_status = 'pre_screen'
+             WHERE ai_extracted = 0 AND verification_status = 'pending';
+            DROP TABLE albums;
+            ALTER TABLE albums_new RENAME TO albums;
+            COMMIT;
+            PRAGMA foreign_keys=ON;
+        """)
+        logger.info("DB migration complete.")
+    finally:
+        conn.close()
 
 
 # ─── raw_messages ────────────────────────────────────────────────────────────
@@ -100,7 +162,21 @@ def get_album(album_id: int) -> Optional[sqlite3.Row]:
 def get_albums_pending_ai() -> list[sqlite3.Row]:
     with db_conn() as conn:
         return conn.execute(
-            "SELECT * FROM albums WHERE ai_extracted=0 ORDER BY id ASC"
+            "SELECT * FROM albums WHERE ai_extracted=0 AND verification_status!='deferred' ORDER BY id ASC"
+        ).fetchall()
+
+
+def get_albums_pending_prescreen() -> list[sqlite3.Row]:
+    with db_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM albums WHERE verification_status='pre_screen' ORDER BY id ASC"
+        ).fetchall()
+
+
+def get_albums_deferred() -> list[sqlite3.Row]:
+    with db_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM albums WHERE verification_status='deferred' ORDER BY id ASC"
         ).fetchall()
 
 
@@ -135,10 +211,12 @@ def get_verification_stats() -> dict:
     with db_conn() as conn:
         row = conn.execute(
             """SELECT
+               SUM(CASE WHEN verification_status='pre_screen' THEN 1 ELSE 0 END) AS pre_screen,
                SUM(CASE WHEN verification_status='pending' THEN 1 ELSE 0 END) AS pending,
                SUM(CASE WHEN verification_status='verified' THEN 1 ELSE 0 END) AS verified,
                SUM(CASE WHEN verification_status='rejected' THEN 1 ELSE 0 END) AS rejected,
                SUM(CASE WHEN verification_status='needs_review' THEN 1 ELSE 0 END) AS needs_review,
+               SUM(CASE WHEN verification_status='deferred' THEN 1 ELSE 0 END) AS deferred,
                COUNT(*) AS total
                FROM albums"""
         ).fetchone()
