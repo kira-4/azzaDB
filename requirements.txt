@@ -1,4 +1,4 @@
-hydrogram>=0.1.4
+hydrogram[fast]>=0.1.4
 python-telegram-bot>=21.0
 google-genai>=1.0.0
 mutagen>=1.47.0
