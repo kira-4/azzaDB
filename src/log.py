@@ -76,3 +76,4 @@ def setup_logging():
     logging.basicConfig(level=logging.INFO, handlers=[handler])
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("hydrogram").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext.AIORateLimiter").setLevel(logging.CRITICAL)
