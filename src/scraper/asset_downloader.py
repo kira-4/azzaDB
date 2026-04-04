@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 
 from hydrogram import Client
 from hydrogram.errors import FloodWait
@@ -47,13 +48,13 @@ def _album_dir(artist_name: str, album_name: str) -> str:
 
 
 async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
-                           dest_dir: str) -> tuple[str, str]:
+                           dest_dir: str, progress=None) -> tuple[str, str]:
     """Download media into dest_dir. Returns (saved_path, original_stem)."""
     attempt = 0
     while True:
         try:
             message = await client.get_messages(chat_id, message_id)
-            saved_path = await client.download_media(message, file_name=dest_dir + "/")
+            saved_path = await client.download_media(message, file_name=dest_dir + "/", progress=progress)
             if not saved_path:
                 raise ValueError(f"No media in message {message_id}")
 
@@ -77,8 +78,12 @@ async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
                 raise
 
 
-async def download_album(album_id: int, group_id: int):
-    """Download cover + all audio tracks for an album into artist/album/ structure."""
+async def download_album(album_id: int, group_id: int, on_progress=None):
+    """Download cover + all audio tracks for an album into artist/album/ structure.
+
+    on_progress: optional async callable(track_idx, total_tracks, track_name,
+                 current_bytes, total_bytes, speed_bps, eta_secs)
+    """
     album = dict(get_album(album_id))
     artists = get_album_artists(album_id)
     tracks = get_tracks_for_album(album_id)
@@ -88,7 +93,8 @@ async def download_album(album_id: int, group_id: int):
     album_dir = _album_dir(artist_name, album_name)
     os.makedirs(album_dir, exist_ok=True)
 
-    client = Client(SESSION_NAME, api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH)
+    client = Client(SESSION_NAME, api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH,
+                    max_concurrent_transmissions=4)
     async with client:
         # ── Cover ──────────────────────────────────────────────────────────────
         if album.get("cover_message_id") and not album.get("cover_downloaded"):
@@ -105,15 +111,51 @@ async def download_album(album_id: int, group_id: int):
                 logger.error("Cover download failed for album %d: %s", album_id, e)
 
         # ── Tracks ─────────────────────────────────────────────────────────────
+        pending_tracks = [t for t in tracks if not t["downloaded"]]
+        total_tracks = len(pending_tracks)
+
+        # Pre-fetch file sizes so progress can be reported at the album level
+        total_album_bytes = 0
+        if on_progress and pending_tracks:
+            size_msgs = await client.get_messages(group_id, [t["message_id"] for t in pending_tracks])
+            for m in (size_msgs if isinstance(size_msgs, list) else [size_msgs]):
+                if m:
+                    media = getattr(m, "audio", None) or getattr(m, "document", None)
+                    total_album_bytes += getattr(media, "file_size", 0) or 0
+
         downloaded = 0
-        for track in tracks:
-            if track["downloaded"]:
-                continue
+        completed_bytes = 0  # bytes from fully finished tracks
+        for track_idx, track in enumerate(pending_tracks, 1):
             num = track["track_number"] or 0
+            display_name = (track["track_name_ar"] or "").strip() or f"Track {num or track_idx}"
+
+            track_progress = None
+            if on_progress:
+                # Signal "starting this track" with album-level offsets
+                await on_progress(track_idx, total_tracks, display_name,
+                                  completed_bytes, total_album_bytes, 0.0, 0.0)
+                _state = [0, time.monotonic()]  # [last_bytes, last_time]
+                _done = completed_bytes
+
+                async def _progress_cb(current, total,
+                                       _idx=track_idx, _name=display_name, _s=_state,
+                                       _prev=_done, _album_total=total_album_bytes):
+                    now = time.monotonic()
+                    dt = now - _s[1]
+                    if dt < 0.3:
+                        return
+                    speed = (current - _s[0]) / dt if dt > 0 else 0.0
+                    album_current = _prev + current
+                    eta = (_album_total - album_current) / speed if speed > 0 and _album_total > 0 else 0.0
+                    _s[0] = current
+                    _s[1] = now
+                    await on_progress(_idx, total_tracks, _name, album_current, _album_total, speed, eta)
+
+                track_progress = _progress_cb
 
             try:
                 saved_path, telegram_stem = await _fetch_and_save(
-                    client, track["message_id"], group_id, album_dir
+                    client, track["message_id"], group_id, album_dir, progress=track_progress
                 )
                 ext = os.path.splitext(saved_path)[1]
 
@@ -129,6 +171,7 @@ async def download_album(album_id: int, group_id: int):
                 os.replace(saved_path, final_path)
 
                 update_track_download(track["id"], final_path)
+                completed_bytes += os.path.getsize(final_path)
                 downloaded += 1
                 logger.info("Track: %s", final_path)
             except Exception as e:
@@ -141,4 +184,4 @@ async def download_album(album_id: int, group_id: int):
         embedded = embed_metadata_for_album(album_id)
         logger.info("Album %d: embedded metadata for %d tracks", album_id, embedded)
 
-    return downloaded
+    return downloaded, completed_bytes
