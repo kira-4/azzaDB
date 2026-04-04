@@ -58,6 +58,25 @@ def _load_cover_bytes(cover_path: str | None) -> bytes | None:
         return f.read()
 
 
+def _extract_cover_from_track(track_path: str) -> bytes | None:
+    """Read the embedded cover art from an existing audio file without modifying it."""
+    try:
+        if track_path.lower().endswith(".m4a"):
+            tags = MP4(track_path)
+            covers = tags.get("covr")
+            if covers:
+                return bytes(covers[0])
+        else:
+            audio = MP3(track_path)
+            if audio.tags:
+                for key in audio.tags.keys():
+                    if key.startswith("APIC"):
+                        return audio.tags[key].data
+    except Exception as e:
+        logger.debug("Could not extract cover from %s: %s", track_path, e)
+    return None
+
+
 def _embed_mp3(track_path: str, title: str, artist_str: str, album_name: str,
                track_number: int, gregorian_year: str, comment: str,
                cover_bytes: bytes | None):
@@ -115,6 +134,13 @@ def embed_metadata_for_album(album_id: int) -> int:
     gregorian_year = _hijri_to_gregorian_year(album)
     comment = " | ".join(p for p in [album.get("occasion_ar"), album.get("location_ar")] if p)
     cover_bytes = _load_cover_bytes(album.get("cover_local_path"))
+    if not cover_bytes:
+        for track in tracks:
+            if track["downloaded"] and track["local_path"] and os.path.exists(track["local_path"]):
+                cover_bytes = _extract_cover_from_track(track["local_path"])
+                if cover_bytes:
+                    logger.info("Album %s: using cover extracted from %s", album_name, track["local_path"])
+                    break
     embedded = 0
 
     for track in tracks:
