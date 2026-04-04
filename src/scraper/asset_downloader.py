@@ -18,7 +18,7 @@ from src.database.db import (
 
 logger = logging.getLogger(__name__)
 
-SESSION_NAME = "old/ret_mes"
+SESSION_NAME = "data/ret_mes"
 
 _ILLEGAL_CHARS = r'\/:*?"<>|'
 
