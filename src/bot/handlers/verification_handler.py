@@ -9,6 +9,7 @@ Verification flow:
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime
 
 from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -82,6 +83,23 @@ def _format_album_card(album: dict, artists: list, track_count: int) -> str:
 def _format_date(album: dict) -> str:
     parts = [p for p in [album["hijri_day"], album["hijri_month"], album["hijri_date"]] if p]
     return " ".join(parts) if parts else "—"
+
+
+def _format_speed(bps: float) -> str:
+    if bps < 1024:
+        return f"{bps:.0f} B/s"
+    if bps < 1024 * 1024:
+        return f"{bps / 1024:.1f} KB/s"
+    return f"{bps / 1024 / 1024:.1f} MB/s"
+
+
+def _format_eta(secs: float) -> str:
+    if secs <= 0 or secs > 86400:
+        return "—"
+    secs = int(secs)
+    if secs < 60:
+        return f"{secs}s"
+    return f"{secs // 60}m {secs % 60:02d}s"
 
 
 def _review_keyboard(album_id: int) -> InlineKeyboardMarkup:
@@ -168,7 +186,40 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from src.scraper.asset_downloader import download_album
 
         async def _download_and_update():
-            await download_album(album_id, TARGET_GROUP_ID)
+            _last_edit = [0.0]
+
+            async def on_progress(track_idx, total_tracks, track_name,
+                                  current_bytes, total_bytes, speed_bps, eta_secs):
+                now = time.monotonic()
+                if now - _last_edit[0] < 1.0:
+                    return
+                _last_edit[0] = now
+
+                if total_bytes > 0 and current_bytes > 0:
+                    pct = int(current_bytes / total_bytes * 100)
+                    speed_str = _format_speed(speed_bps)
+                    eta_str = _format_eta(eta_secs)
+                    progress_line = f"↓ {pct}% · {speed_str} · ETA {eta_str}"
+                else:
+                    progress_line = "↓ Starting…"
+
+                text = (
+                    f'⏳ Album {album_id} approved by {_he(approved_by)}. Downloading…\n\n'
+                    f'📥 {_he(track_name)} ({track_idx}/{total_tracks})\n'
+                    f'{progress_line}\n\n'
+                    f'<a href="{link}">source</a>'
+                )
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=msg.chat_id,
+                        message_id=msg.message_id,
+                        text=text,
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+            await download_album(album_id, TARGET_GROUP_ID, on_progress=on_progress)
             await context.bot.edit_message_text(
                 chat_id=msg.chat_id,
                 message_id=msg.message_id,
