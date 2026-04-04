@@ -3,20 +3,20 @@ One-shot script to fix Windows-1256 mojibake in existing track names.
 
 Checks every downloaded track whose name doesn't look like readable Arabic,
 attempts the latin-1 → windows-1256 re-encoding, and falls back to
-"Track NN" when that still yields garbage.  Renames the file on disk and
-updates the DB in lockstep.
+"Track NN" when that still yields garbage.  Renames the file on disk,
+updates the DB, and re-embeds the title tag inside the audio file.
 
 Usage (inside the container or venv):
     python fix_track_names.py            # dry run — shows what would change
-    python fix_track_names.py --apply    # actually rename files + update DB
+    python fix_track_names.py --apply    # rename files + update DB + re-embed tags
 """
 
 import argparse
 import os
 import sqlite3
-import sys
 
 from src.config import DATABASE_PATH
+from src.pipeline.metadata_embedder import embed_metadata_for_album
 
 # ── encoding helpers (mirror of asset_downloader) ───────────────────────────
 
@@ -54,7 +54,7 @@ def main(apply: bool):
     conn.row_factory = sqlite3.Row
 
     tracks = conn.execute(
-        """SELECT id, track_number, track_name_ar, local_path
+        """SELECT id, album_id, track_number, track_name_ar, local_path
            FROM audio_tracks
            WHERE downloaded = 1
              AND track_name_ar IS NOT NULL
@@ -64,6 +64,7 @@ def main(apply: bool):
     fixed_count = 0
     fallback_count = 0
     skip_count = 0
+    affected_album_ids = set()
 
     for t in tracks:
         name = t["track_name_ar"].strip()
@@ -80,19 +81,11 @@ def main(apply: bool):
             tag = "FIXED"
             fixed_count += 1
         else:
-            # Derive positional index within the album for a clean "Track NN"
-            album_row = conn.execute(
-                "SELECT album_id FROM audio_tracks WHERE id = ?", (t["id"],)
-            ).fetchone()
-            if album_row:
-                siblings = conn.execute(
-                    """SELECT id FROM audio_tracks
-                       WHERE album_id = ? ORDER BY track_number ASC""",
-                    (album_row["album_id"],),
-                ).fetchall()
-                pos = next((i + 1 for i, r in enumerate(siblings) if r["id"] == t["id"]), num or 1)
-            else:
-                pos = num or 1
+            siblings = conn.execute(
+                "SELECT id FROM audio_tracks WHERE album_id = ? ORDER BY track_number ASC",
+                (t["album_id"],),
+            ).fetchall()
+            pos = next((i + 1 for i, r in enumerate(siblings) if r["id"] == t["id"]), num or 1)
             new_name = f"Track {pos:02d}"
             tag = "FALLBACK"
             fallback_count += 1
@@ -113,22 +106,33 @@ def main(apply: bool):
             if old_path != new_path and os.path.exists(old_path):
                 os.rename(old_path, new_path)
             conn.execute(
-                "UPDATE audio_tracks SET track_name_ar = ?, local_path = ? WHERE id = ?",
+                """UPDATE audio_tracks
+                   SET track_name_ar = ?, local_path = ?, metadata_embedded = 0
+                   WHERE id = ?""",
                 (new_name, new_path, t["id"]),
             )
+            affected_album_ids.add(t["album_id"])
 
     if apply:
         conn.commit()
+        conn.close()
+
         print(f"\nApplied: {fixed_count} fixed, {fallback_count} fallback, {skip_count} skipped.")
+
+        if affected_album_ids:
+            print(f"Re-embedding tags for {len(affected_album_ids)} album(s)...")
+            for album_id in sorted(affected_album_ids):
+                embedded = embed_metadata_for_album(album_id)
+                print(f"  album {album_id}: re-embedded {embedded} track(s)")
+        print("Done.")
     else:
+        conn.close()
         print(f"\nDry run: {fixed_count} would be fixed, {fallback_count} would fall back, {skip_count} already OK.")
         print("Re-run with --apply to commit changes.")
 
-    conn.close()
-
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fix mojibake track names in the DB and on disk.")
+    parser = argparse.ArgumentParser(description="Fix mojibake track names in the DB, on disk, and in embedded tags.")
     parser.add_argument("--apply", action="store_true", help="Actually apply changes (default: dry run)")
     args = parser.parse_args()
     main(apply=args.apply)
