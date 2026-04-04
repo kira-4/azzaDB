@@ -8,11 +8,11 @@ Return ONLY valid JSON matching the schema — no commentary, no markdown fences
 Fields:
 - album_type: "شريط" or "إصدار" (or null if unclear)
 - album_name: the title inside [] brackets, or null
-- artists: list of artist names (strip # symbols if present), or []
+- artists: list of artist names (strip # symbols and underscores if present), or []
 - occasion: the Islamic occasion (e.g. استشهاد فاطمة الزهراء), or null
 - hijri_date: full year string like "1439 هـ", or null
 - hijri_month: month name in Arabic, or null
-- hijri_day: day/night description like "ليلة 13", or null
+- hijri_day: the day number only as a string (e.g. "13"), strip any preceding word like "ليلة" or "يوم" or similar — digits only, or null
 - location: full location string, or null
 - city: city name only, or null
 - audio_engineer: name of audio engineer if mentioned, or null
