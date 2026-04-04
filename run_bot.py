@@ -16,9 +16,10 @@ logging.basicConfig(
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-from src.database.db import init_db
+from src.database.db import init_db, run_migrations
 from src.bot.main import run
 
 if __name__ == "__main__":
     init_db()
+    run_migrations()
     run()

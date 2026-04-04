@@ -118,16 +118,11 @@ def _format_picker_text(album_id: int, album: dict) -> str:
     return "\n".join(lines)
 
 
-async def send_next_pending(context: ContextTypes.DEFAULT_TYPE):
-    """Send the next pending album to VERIFICATION_CHAT_ID."""
-    albums = get_albums_pending_verification()
-    if not albums:
-        await context.bot.send_message(VERIFICATION_CHAT_ID, "✅ No pending albums.")
-        return
-
-    album = dict(albums[0])
-    artists = get_album_artists(album["id"])
-    tracks = get_tracks_for_album(album["id"])
+async def send_album_card(context: ContextTypes.DEFAULT_TYPE, album_id: int):
+    """Send the verification card for a specific album."""
+    album = dict(get_album(album_id))
+    artists = get_album_artists(album_id)
+    tracks = get_tracks_for_album(album_id)
     text = _format_album_card(album, artists, len(tracks))
 
     cover_path = album.get("cover_local_path")
@@ -139,8 +134,17 @@ async def send_next_pending(context: ContextTypes.DEFAULT_TYPE):
         VERIFICATION_CHAT_ID,
         text,
         parse_mode="HTML",
-        reply_markup=_review_keyboard(album["id"]),
+        reply_markup=_review_keyboard(album_id),
     )
+
+
+async def send_next_pending(context: ContextTypes.DEFAULT_TYPE):
+    """Send the next pending album to VERIFICATION_CHAT_ID."""
+    albums = get_albums_pending_verification()
+    if not albums:
+        await context.bot.send_message(VERIFICATION_CHAT_ID, "✅ No pending albums.")
+        return
+    await send_album_card(context, albums[0]["id"])
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -173,7 +177,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         asyncio.create_task(_download_and_update())
-        await send_next_pending(context)
+        if get_albums_pending_verification():
+            await send_next_pending(context)
+        else:
+            from src.bot.handlers.prescreen_handler import send_next_prescreen
+            await send_next_prescreen(context)
 
     elif action == "reject":
         context.user_data["rejecting_album_id"] = album_id
@@ -282,7 +290,11 @@ async def receive_reject_reason(update: Update, context: ContextTypes.DEFAULT_TY
     reason = update.message.text
     set_album_verification(album_id, "rejected", str(update.effective_user.id), reason)
     await update.message.reply_text(f"❌ Album {album_id} rejected. Reason recorded.")
-    await send_next_pending(context)
+    if get_albums_pending_verification():
+        await send_next_pending(context)
+    else:
+        from src.bot.handlers.prescreen_handler import send_next_prescreen
+        await send_next_prescreen(context)
     return ConversationHandler.END
 
 

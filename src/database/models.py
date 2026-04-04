@@ -45,8 +45,8 @@ CREATE TABLE IF NOT EXISTS albums (
 
     ai_extracted         BOOLEAN DEFAULT 0,
     ai_confidence        REAL,
-    verification_status  TEXT DEFAULT 'pending'
-                         CHECK(verification_status IN ('pending','verified','rejected','needs_review')),
+    verification_status  TEXT DEFAULT 'pre_screen'
+                         CHECK(verification_status IN ('pre_screen','pending','verified','rejected','needs_review','deferred')),
     verified_by          TEXT,
     verified_at          DATETIME,
     rejection_reason     TEXT,
