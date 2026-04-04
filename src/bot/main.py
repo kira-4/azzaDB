@@ -19,7 +19,7 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 def build_app() -> Application:
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).rate_limiter(AIORateLimiter()).build()
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).rate_limiter(AIORateLimiter(max_retries=5)).build()
 
     for handler in build_admin_handlers():
         app.add_handler(handler)
