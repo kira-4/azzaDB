@@ -1,6 +1,6 @@
 import logging
 
-from telegram.ext import Application
+from telegram.ext import AIORateLimiter, Application
 
 from src.config import TELEGRAM_BOT_TOKEN
 from src.bot.handlers.verification_handler import build_verification_conversation
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def build_app() -> Application:
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).rate_limiter(AIORateLimiter()).build()
 
     for handler in build_admin_handlers():
         app.add_handler(handler)
