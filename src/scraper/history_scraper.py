@@ -9,7 +9,7 @@ from src.database.db import insert_raw_message
 
 logger = logging.getLogger(__name__)
 
-SESSION_NAME = "old/ret_mes"
+SESSION_NAME = "data/ret_mes"
 
 
 def _classify_message(message) -> str:
