@@ -1,0 +1,17 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Persists the SQLite database across container rebuilds
+      - ./data:/app/data
+      # Persists the Hydrogram MTProto session file (your Telegram login)
+      # First run: docker compose exec bot python scrape_history.py --limit 1
+      # to authenticate; subsequent runs reuse the saved session silently.
+      - ./old:/app/old
+      # Download path — set DOWNLOADS_PATH in .env (or export it) to point
+      # at wherever you want audio files stored on the host, e.g.:
+      #   DOWNLOADS_PATH=/media/archive/latmyaat
+      # Defaults to ./downloads next to this file if unset.
+      - ${DOWNLOADS_PATH:-./downloads}:/app/downloads
