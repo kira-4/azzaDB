@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 # gcc is required to compile TgCrypto (C extension bundled with hydrogram[fast])
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
+    build-essential \
     libssl-dev \
     libffi-dev \
     && rm -rf /var/lib/apt/lists/*
