@@ -217,7 +217,7 @@ async def cmd_redownload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async def _do_download():
         _last_edit = [0.0]
 
-        async def on_progress(track_idx, total_tracks, track_name,
+        async def on_progress(completed_count, total_tracks, active_count,
                               current_bytes, total_bytes, speed_bps, eta_secs):
             now = time.monotonic()
             if now - _last_edit[0] < 5.0:
@@ -230,7 +230,8 @@ async def cmd_redownload(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 progress_line = "↓ Starting…"
             text = (
                 f'⏳ Re-downloading album {album_id}…\n\n'
-                f'📥 {_he(track_name)} ({track_idx}/{total_tracks})\n'
+                f'🎵 {_he(album.get("album_name_ar") or "—")}\n'
+                f'📥 {completed_count}/{total_tracks} done · {active_count} active\n'
                 f'{progress_line}\n\n'
                 f'<a href="{link}">source</a>'
             )

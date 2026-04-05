@@ -5,7 +5,7 @@ import shutil
 import time
 
 from hydrogram import Client
-from hydrogram.errors import FloodWait
+from hydrogram.errors import AuthBytesInvalid, AuthKeyUnregistered, FloodWait
 
 from src.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, AUDIO_DIR
 from src.database.db import (
@@ -23,6 +23,10 @@ SESSION_NAME = "data/ret_mes"
 
 _ILLEGAL_CHARS = r'\/:*?"<>|'
 _ARABIC_RANGE = range(0x0600, 0x06FF + 1)
+
+# Max simultaneous track downloads.  Keep in sync with max_concurrent_transmissions
+# (part-level parallelism inside Hydrogram) — 4 × 4 = 16 concurrent TCP chunks.
+CONCURRENCY = 4
 
 
 def _looks_arabic(text: str) -> bool:
@@ -70,8 +74,8 @@ def _album_dir(artist_name: str, album_name: str) -> str:
 
 
 async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
-                           dest_dir: str, progress=None) -> tuple[str, str]:
-    """Download media into dest_dir. Returns (saved_path, original_stem)."""
+                           dest_dir: str, progress=None) -> tuple[str, str, int | None]:
+    """Download media into dest_dir. Returns (saved_path, original_stem, expected_bytes)."""
     attempt = 0
     while True:
         try:
@@ -83,14 +87,36 @@ async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
             # Prefer the name Telegram shows in the music player (title > file_name > saved path stem)
             media = getattr(message, "audio", None) or getattr(message, "document", None)
             original_name = None
+            expected_size = None
             if media:
                 original_name = getattr(media, "title", None) or getattr(media, "file_name", None)
+                expected_size = getattr(media, "file_size", None)
             stem = (
                 os.path.splitext(original_name)[0]
                 if original_name
                 else os.path.splitext(os.path.basename(saved_path))[0]
             )
-            return saved_path, stem
+
+            # Hydrogram can swallow AUTH_BYTES_INVALID internally and return a
+            # partial/empty file instead of raising.  Detect and retry here.
+            if expected_size and os.path.getsize(saved_path) < expected_size:
+                actual = os.path.getsize(saved_path)
+                os.unlink(saved_path)
+                if attempt >= 5:
+                    raise ValueError(
+                        f"Truncated download for message {message_id} after {attempt} attempts: "
+                        f"got {actual} B, expected {expected_size} B"
+                    )
+                wait = 2 ** attempt
+                logger.warning(
+                    "Truncated download msg %d (%d/%d B): retry %d in %ds",
+                    message_id, actual, expected_size, attempt + 1, wait,
+                )
+                await asyncio.sleep(wait)
+                attempt += 1
+                continue
+
+            return saved_path, stem, expected_size
         except FloodWait as e:
             wait = e.value * (2 ** attempt)
             logger.warning("FloodWait: sleeping %ds (attempt %d)", wait, attempt + 1)
@@ -98,13 +124,26 @@ async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
             attempt += 1
             if attempt > 5:
                 raise
+        except (AuthBytesInvalid, AuthKeyUnregistered) as e:
+            # Parallel downloads race to ExportAuthorization for the same DC.
+            # The losing coroutine gets AUTH_BYTES_INVALID or AUTH_KEY_UNREGISTERED.
+            # After a short back-off the winning coroutine has established the DC
+            # session and this retry will succeed.
+            if attempt >= 3:
+                raise
+            wait = 2 ** attempt
+            logger.warning("DC auth race (%s): retry %d in %ds", type(e).__name__, attempt + 1, wait)
+            await asyncio.sleep(wait)
+            attempt += 1
 
 
 async def download_album(album_id: int, group_id: int, on_progress=None):
     """Download cover + all audio tracks for an album into artist/album/ structure.
 
-    on_progress: optional async callable(track_idx, total_tracks, track_name,
+    on_progress: optional async callable(completed_count, total_tracks, active_count,
                  current_bytes, total_bytes, speed_bps, eta_secs)
+      completed_count — tracks fully finished
+      active_count    — tracks currently downloading (semaphore acquired)
     """
     album = dict(get_album(album_id))
     artists = get_album_artists(album_id)
@@ -116,30 +155,30 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
     os.makedirs(album_dir, exist_ok=True)
 
     client = Client(SESSION_NAME, api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH,
-                    max_concurrent_transmissions=4)
+                    max_concurrent_transmissions=CONCURRENCY)
     async with client:
         # ── Disk space pre-check ───────────────────────────────────────────────
-        pending_tracks = get_tracks_for_album(album_id)
-        pending_tracks = [t for t in pending_tracks if not t["downloaded"]]
+        pending_tracks = [t for t in tracks if not t["downloaded"]]
+        total_album_bytes = 0
         if pending_tracks:
             size_msgs = await client.get_messages(group_id, [t["message_id"] for t in pending_tracks])
-            needed = sum(
+            total_album_bytes = sum(
                 getattr(getattr(m, "audio", None) or getattr(m, "document", None), "file_size", 0) or 0
                 for m in (size_msgs if isinstance(size_msgs, list) else [size_msgs])
                 if m
             )
             free = shutil.disk_usage(AUDIO_DIR).free
-            if needed > 0 and free < needed * 1.05:  # 5% headroom
+            if total_album_bytes > 0 and free < total_album_bytes * 1.05:
                 raise OSError(
                     f"Not enough disk space for album {album_id}: "
-                    f"need {needed / 1024**2:.1f} MB, free {free / 1024**2:.1f} MB"
+                    f"need {total_album_bytes / 1024**2:.1f} MB, free {free / 1024**2:.1f} MB"
                 )
 
         # ── Cover ──────────────────────────────────────────────────────────────
         if album.get("cover_message_id") and not album.get("cover_downloaded"):
             cover_dest = os.path.join(album_dir, "cover.jpg")
             try:
-                saved, _ = await _fetch_and_save(client, album["cover_message_id"], group_id, album_dir)
+                saved, _, _ = await _fetch_and_save(client, album["cover_message_id"], group_id, album_dir)
                 os.replace(saved, cover_dest)
                 update_album_ai_fields(album_id, {
                     "cover_local_path": cover_dest,
@@ -149,81 +188,116 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
             except Exception as e:
                 logger.error("Cover download failed for album %d: %s", album_id, e)
 
-        # ── Tracks ─────────────────────────────────────────────────────────────
+        # ── Parallel track downloads ───────────────────────────────────────────
         total_tracks = len(pending_tracks)
-        # total_album_bytes already computed by the disk-space pre-check above
-        total_album_bytes = needed if pending_tracks else 0
+        if not pending_tracks:
+            return 0, 0
 
-        downloaded = 0
-        completed_bytes = 0  # bytes from fully finished tracks
-        for track_idx, track in enumerate(pending_tracks, 1):
+        # Aggregate progress state — asyncio is single-threaded so no locks needed,
+        # but _last_report must be written BEFORE any await to prevent duplicate fires.
+        _track_bytes: dict[int, int] = {}  # message_id → in-flight bytes (semaphore held)
+        _completed_bytes = 0
+        _completed_count = 0
+
+        _speed_t = time.monotonic()
+        _speed_base = 0          # total bytes at last speed sample
+        _current_speed = 0.0
+        _last_report = 0.0
+        _REPORT_INTERVAL = 0.5   # compute speed every 0.5 s; bot-side throttle handles Telegram edits
+
+        async def _report():
+            nonlocal _speed_t, _speed_base, _current_speed, _last_report
+            if not on_progress:
+                return
+            now = time.monotonic()
+            if now - _last_report < _REPORT_INTERVAL:
+                return
+            # Set _last_report before the await so a concurrent callback sees it immediately.
+            _last_report = now
+
+            total_now = _completed_bytes + sum(_track_bytes.values())
+            dt = now - _speed_t
+            if dt >= 0.3:
+                _current_speed = (total_now - _speed_base) / dt
+                _speed_base = total_now
+                _speed_t = now
+
+            remaining = total_album_bytes - total_now
+            eta = remaining / _current_speed if _current_speed > 0 and remaining > 0 else 0.0
+            await on_progress(
+                _completed_count, total_tracks, len(_track_bytes),
+                total_now, total_album_bytes, _current_speed, eta,
+            )
+
+        sem = asyncio.Semaphore(CONCURRENCY)
+        downloaded_count = 0
+        downloaded_bytes = 0
+
+        async def download_one(track_idx: int, track: dict):
+            nonlocal _completed_bytes, _completed_count, downloaded_count, downloaded_bytes
+
+            msg_id = track["message_id"]
             num = track["track_number"] or 0
             display_name = (track["track_name_ar"] or "").strip() or f"Track {num or track_idx}"
 
-            track_progress = None
-            if on_progress:
-                # Signal "starting this track" with album-level offsets
-                await on_progress(track_idx, total_tracks, display_name,
-                                  completed_bytes, total_album_bytes, 0.0, 0.0)
-                _state = [0, time.monotonic()]  # [last_bytes, last_time]
-                _done = completed_bytes
+            async def _progress_cb(current: int, total: int):
+                _track_bytes[msg_id] = current
+                await _report()
 
-                async def _progress_cb(current, total,
-                                       _idx=track_idx, _name=display_name, _s=_state,
-                                       _prev=_done, _album_total=total_album_bytes):
-                    now = time.monotonic()
-                    dt = now - _s[1]
-                    if dt < 0.3:
-                        return
-                    speed = (current - _s[0]) / dt if dt > 0 else 0.0
-                    album_current = _prev + current
-                    eta = (_album_total - album_current) / speed if speed > 0 and _album_total > 0 else 0.0
-                    _s[0] = current
-                    _s[1] = now
-                    await on_progress(_idx, total_tracks, _name, album_current, _album_total, speed, eta)
+            async with sem:
+                # Only register in _track_bytes once the semaphore is acquired
+                # so active_count reflects truly downloading tracks.
+                _track_bytes[msg_id] = 0
+                try:
+                    saved_path, telegram_stem, _ = await _fetch_and_save(
+                        client, msg_id, group_id, album_dir, progress=_progress_cb
+                    )
+                    ext = os.path.splitext(saved_path)[1]
 
-                track_progress = _progress_cb
-
-            try:
-                saved_path, telegram_stem = await _fetch_and_save(
-                    client, track["message_id"], group_id, album_dir, progress=track_progress
-                )
-                ext = os.path.splitext(saved_path)[1]
-
-                # Use DB name if available, otherwise use Telegram's filename
-                track_name = (track["track_name_ar"] or "").strip()
-                if not track_name:
-                    track_name = telegram_stem
-                    update_track_name(track["id"], track_name)
-
-                # Fix Windows-1256 mojibake (Arabic bytes misread as Latin-1)
-                if track_name and not _looks_arabic(track_name):
-                    fixed = _fix_encoding(track_name)
-                    if fixed:
-                        track_name = fixed
-                        update_track_name(track["id"], track_name)
-                    else:
-                        # Still unreadable — fall back to positional name
-                        track_name = f"Track {track_idx:02d}"
+                    track_name = (track["track_name_ar"] or "").strip()
+                    if not track_name:
+                        track_name = telegram_stem
                         update_track_name(track["id"], track_name)
 
-                safe_name = _sanitize_name(track_name)
-                final_filename = f"{num:02d} - {safe_name}{ext}" if safe_name else f"{num:02d}{ext}"
-                final_path = os.path.join(album_dir, final_filename)
-                os.replace(saved_path, final_path)
+                    if track_name and not _looks_arabic(track_name):
+                        fixed = _fix_encoding(track_name)
+                        if fixed:
+                            track_name = fixed
+                            update_track_name(track["id"], track_name)
+                        else:
+                            track_name = f"Track {track_idx:02d}"
+                            update_track_name(track["id"], track_name)
 
-                update_track_download(track["id"], final_path)
-                completed_bytes += os.path.getsize(final_path)
-                downloaded += 1
-                logger.info("Track: %s", final_path)
-            except Exception as e:
-                logger.error("Track %d download failed: %s", track["id"], e)
+                    safe_name = _sanitize_name(track_name)
+                    final_filename = f"{num:02d} - {safe_name}{ext}" if safe_name else f"{num:02d}{ext}"
+                    final_path = os.path.join(album_dir, final_filename)
+                    os.replace(saved_path, final_path)
 
-    logger.info("Album %d: downloaded %d/%d tracks", album_id, downloaded, len(tracks))
+                    update_track_download(track["id"], final_path)
 
-    if downloaded > 0:
+                    file_size = os.path.getsize(final_path)
+                    # Remove from in-flight BEFORE adding to completed so _report
+                    # never double-counts this track.
+                    _track_bytes.pop(msg_id, None)
+                    _completed_bytes += file_size
+                    _completed_count += 1
+                    downloaded_count += 1
+                    downloaded_bytes += file_size
+                    logger.info("Track: %s", final_path)
+                except Exception as e:
+                    _track_bytes.pop(msg_id, None)
+                    logger.error("Track %d download failed: %s", track["id"], e)
+
+        await asyncio.gather(
+            *(download_one(i + 1, t) for i, t in enumerate(pending_tracks)),
+            return_exceptions=True,
+        )
+
+    logger.info("Album %d: downloaded %d/%d tracks", album_id, downloaded_count, len(tracks))
+
+    if downloaded_count > 0:
         from src.pipeline.metadata_embedder import embed_metadata_for_album
         embedded = embed_metadata_for_album(album_id)
         logger.info("Album %d: embedded metadata for %d tracks", album_id, embedded)
 
-    return downloaded, completed_bytes
+    return downloaded_count, downloaded_bytes
