@@ -97,14 +97,24 @@ async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
                 else os.path.splitext(os.path.basename(saved_path))[0]
             )
 
-            # Reject partial downloads before they corrupt the archive.
+            # Hydrogram can swallow AUTH_BYTES_INVALID internally and return a
+            # partial/empty file instead of raising.  Detect and retry here.
             if expected_size and os.path.getsize(saved_path) < expected_size:
                 actual = os.path.getsize(saved_path)
                 os.unlink(saved_path)
-                raise ValueError(
-                    f"Truncated download for message {message_id}: "
-                    f"got {actual} B, expected {expected_size} B"
+                if attempt >= 5:
+                    raise ValueError(
+                        f"Truncated download for message {message_id} after {attempt} attempts: "
+                        f"got {actual} B, expected {expected_size} B"
+                    )
+                wait = 2 ** attempt
+                logger.warning(
+                    "Truncated download msg %d (%d/%d B): retry %d in %ds",
+                    message_id, actual, expected_size, attempt + 1, wait,
                 )
+                await asyncio.sleep(wait)
+                attempt += 1
+                continue
 
             return saved_path, stem, expected_size
         except FloodWait as e:
