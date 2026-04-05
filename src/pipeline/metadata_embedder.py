@@ -5,8 +5,8 @@ import logging
 import os
 import re
 
-from mutagen.mp3 import MP3
-from mutagen.id3 import TIT2, TPE1, TALB, TDRC, TCON, COMM, TRCK, APIC
+from mutagen.mp3 import MP3, HeaderNotFoundError as MP3HeaderNotFoundError
+from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TDRC, TCON, COMM, TRCK, APIC
 from mutagen.mp4 import MP4, MP4Cover
 
 from src.database.db import get_album, get_album_artists, get_tracks_for_album, update_track_embedded
@@ -80,13 +80,24 @@ def _extract_cover_from_track(track_path: str) -> bytes | None:
 def _embed_mp3(track_path: str, title: str, artist_str: str, album_name: str,
                track_number: int, gregorian_year: str, comment: str,
                cover_bytes: bytes | None):
-    audio = MP3(track_path)
-    if audio.tags is not None:
-        audio.tags.clear()
-    else:
-        audio.add_tags()
+    use_raw_id3 = False
+    try:
+        audio = MP3(track_path)
+        if audio.tags is not None:
+            audio.tags.clear()
+        else:
+            audio.add_tags()
+        tags = audio.tags
+    except MP3HeaderNotFoundError:
+        # Broken/non-standard MPEG frames — write tags via raw ID3 (skips audio validation)
+        logger.warning("MPEG sync failed for %s, falling back to raw ID3 writer", track_path)
+        use_raw_id3 = True
+        try:
+            tags = ID3(track_path)
+            tags.clear()
+        except ID3NoHeaderError:
+            tags = ID3()
 
-    tags = audio.tags
     tags["TIT2"] = TIT2(encoding=3, text=title)
     tags["TPE1"] = TPE1(encoding=3, text=artist_str)
     tags["TALB"] = TALB(encoding=3, text=album_name)
@@ -100,7 +111,10 @@ def _embed_mp3(track_path: str, title: str, artist_str: str, album_name: str,
             encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover_bytes
         )
 
-    audio.save(v2_version=4)
+    if use_raw_id3:
+        tags.save(track_path, v2_version=4)
+    else:
+        audio.save(v2_version=4)
 
 
 def _embed_m4a(track_path: str, title: str, artist_str: str, album_name: str,
