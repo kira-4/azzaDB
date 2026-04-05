@@ -36,6 +36,18 @@ from src.database.db import (
 
 logger = logging.getLogger(__name__)
 
+# Serialises album downloads — only one album downloads at a time even if the
+# user approves several cards back-to-back.
+_download_lock: asyncio.Lock | None = None
+
+
+def _get_download_lock() -> asyncio.Lock:
+    global _download_lock
+    if _download_lock is None:
+        _download_lock = asyncio.Lock()
+    return _download_lock
+
+
 # Conversation states
 PICK_FIELD, AWAIT_FIELD_VALUE, REJECT_REASON = range(3)
 
@@ -195,6 +207,43 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from src.scraper.asset_downloader import download_album
 
         async def _download_and_update():
+            lock = _get_download_lock()
+
+            # If another album is already downloading, show a queued status so
+            # the user knows this one is waiting rather than silently stalled.
+            if lock.locked():
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=msg.chat_id,
+                        message_id=msg.message_id,
+                        text=(
+                            f'⏳ Album {album_id} approved by {_he(approved_by)}. '
+                            f'Queued — waiting for current download to finish… '
+                            f'<a href="{link}">source</a>'
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+            async with lock:
+                # Restore the "Downloading…" header now that we are active.
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=msg.chat_id,
+                        message_id=msg.message_id,
+                        text=(
+                            f'⏳ Album {album_id} approved by {_he(approved_by)}. '
+                            f'Downloading… <a href="{link}">source</a>'
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+                await _do_download()
+
+        async def _do_download():
             _last_edit = [0.0]
 
             async def on_progress(completed_count, total_tracks, active_count,
