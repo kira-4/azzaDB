@@ -197,7 +197,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async def _download_and_update():
             _last_edit = [0.0]
 
-            async def on_progress(track_idx, total_tracks, track_name,
+            async def on_progress(completed_count, total_tracks, active_count,
                                   current_bytes, total_bytes, speed_bps, eta_secs):
                 now = time.monotonic()
                 if now - _last_edit[0] < 5.0:
@@ -214,7 +214,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 text = (
                     f'⏳ Album {album_id} approved by {_he(approved_by)}. Downloading…\n\n'
-                    f'📥 {_he(track_name)} ({track_idx}/{total_tracks})\n'
+                    f'📥 {completed_count}/{total_tracks} done · {active_count} active\n'
                     f'{progress_line}\n\n'
                     f'<a href="{link}">source</a>'
                 )
