@@ -5,7 +5,7 @@ import shutil
 import time
 
 from hydrogram import Client
-from hydrogram.errors import FloodWait
+from hydrogram.errors import AuthBytesInvalid, AuthKeyUnregistered, FloodWait
 
 from src.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, AUDIO_DIR
 from src.database.db import (
@@ -102,6 +102,17 @@ async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
             attempt += 1
             if attempt > 5:
                 raise
+        except (AuthBytesInvalid, AuthKeyUnregistered) as e:
+            # Parallel downloads race to ExportAuthorization for the same DC.
+            # The losing coroutine gets AUTH_BYTES_INVALID or AUTH_KEY_UNREGISTERED.
+            # After a short back-off the winning coroutine has established the DC
+            # session and this retry will succeed.
+            if attempt >= 3:
+                raise
+            wait = 2 ** attempt
+            logger.warning("DC auth race (%s): retry %d in %ds", type(e).__name__, attempt + 1, wait)
+            await asyncio.sleep(wait)
+            attempt += 1
 
 
 async def download_album(album_id: int, group_id: int, on_progress=None):
