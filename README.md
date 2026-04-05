@@ -107,6 +107,7 @@ All commands are admin-only (controlled by `ADMIN_USER_IDS`).
 | `/export` | Send a CSV of all verified albums |
 | `/failed` | List verified albums with incomplete downloads |
 | `/redownload <id>` | Re-trigger download for a verified album with missing tracks |
+| `/reembed <id>` | Re-embed ID3/MP4 metadata tags for all downloaded tracks of a verified album |
 
 ### Pre-screen buttons
 

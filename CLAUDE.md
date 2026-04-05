@@ -152,6 +152,7 @@ GEMINI_API_KEY       # from aistudio.google.com
 - `/export` — send CSV of all verified albums
 - `/failed` — list verified albums with at least one undownloaded track
 - `/redownload <album_id>` — re-trigger download (with live progress) for a verified album with missing tracks
+- `/reembed <album_id>` — re-embed metadata tags (ID3/MP4) for all downloaded tracks of a verified album; fixes wrong sort order in Navidrome after an embedding failure
 
 ### verification_status values
 
