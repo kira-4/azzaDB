@@ -214,6 +214,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 text = (
                     f'⏳ Album {album_id} approved by {_he(approved_by)}. Downloading…\n\n'
+                    f'🎵 {_he(album.get("album_name_ar") or "—")}\n'
                     f'📥 {completed_count}/{total_tracks} done · {active_count} active\n'
                     f'{progress_line}\n\n'
                     f'<a href="{link}">source</a>'
