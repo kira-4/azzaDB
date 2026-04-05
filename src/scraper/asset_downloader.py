@@ -74,8 +74,8 @@ def _album_dir(artist_name: str, album_name: str) -> str:
 
 
 async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
-                           dest_dir: str, progress=None) -> tuple[str, str]:
-    """Download media into dest_dir. Returns (saved_path, original_stem)."""
+                           dest_dir: str, progress=None) -> tuple[str, str, int | None]:
+    """Download media into dest_dir. Returns (saved_path, original_stem, expected_bytes)."""
     attempt = 0
     while True:
         try:
@@ -87,14 +87,26 @@ async def _fetch_and_save(client: Client, message_id: int, chat_id: int,
             # Prefer the name Telegram shows in the music player (title > file_name > saved path stem)
             media = getattr(message, "audio", None) or getattr(message, "document", None)
             original_name = None
+            expected_size = None
             if media:
                 original_name = getattr(media, "title", None) or getattr(media, "file_name", None)
+                expected_size = getattr(media, "file_size", None)
             stem = (
                 os.path.splitext(original_name)[0]
                 if original_name
                 else os.path.splitext(os.path.basename(saved_path))[0]
             )
-            return saved_path, stem
+
+            # Reject partial downloads before they corrupt the archive.
+            if expected_size and os.path.getsize(saved_path) < expected_size:
+                actual = os.path.getsize(saved_path)
+                os.unlink(saved_path)
+                raise ValueError(
+                    f"Truncated download for message {message_id}: "
+                    f"got {actual} B, expected {expected_size} B"
+                )
+
+            return saved_path, stem, expected_size
         except FloodWait as e:
             wait = e.value * (2 ** attempt)
             logger.warning("FloodWait: sleeping %ds (attempt %d)", wait, attempt + 1)
@@ -156,7 +168,7 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
         if album.get("cover_message_id") and not album.get("cover_downloaded"):
             cover_dest = os.path.join(album_dir, "cover.jpg")
             try:
-                saved, _ = await _fetch_and_save(client, album["cover_message_id"], group_id, album_dir)
+                saved, _, _ = await _fetch_and_save(client, album["cover_message_id"], group_id, album_dir)
                 os.replace(saved, cover_dest)
                 update_album_ai_fields(album_id, {
                     "cover_local_path": cover_dest,
@@ -227,7 +239,7 @@ async def download_album(album_id: int, group_id: int, on_progress=None):
                 # so active_count reflects truly downloading tracks.
                 _track_bytes[msg_id] = 0
                 try:
-                    saved_path, telegram_stem = await _fetch_and_save(
+                    saved_path, telegram_stem, _ = await _fetch_and_save(
                         client, msg_id, group_id, album_dir, progress=_progress_cb
                     )
                     ext = os.path.splitext(saved_path)[1]
