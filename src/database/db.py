@@ -323,6 +323,14 @@ def update_track_embedded(track_id: int):
         )
 
 
+def reset_tracks_embedded(album_id: int):
+    """Clear metadata_embedded flag for all tracks of an album so they can be re-embedded."""
+    with db_conn() as conn:
+        conn.execute(
+            "UPDATE audio_tracks SET metadata_embedded=0 WHERE album_id=?", (album_id,)
+        )
+
+
 # ─── grouper batch write ──────────────────────────────────────────────────────
 
 def flush_grouper_batch(group_id: int, candidates: list) -> int:
