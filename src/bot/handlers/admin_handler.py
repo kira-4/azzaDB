@@ -48,7 +48,7 @@ async def cmd_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update.effective_user.id):
         return
     if not context.args:
-        await update.message.reply_text("Usage: /retry <album_id>")
+        await update.message.reply_text("Usage: `/retry <album_id>`", parse_mode="Markdown")
         return
 
     try:
@@ -131,8 +131,8 @@ async def cmd_deferred(update: Update, context: ContextTypes.DEFAULT_TYPE):
         channel_id = str(abs(a["telegram_group_id"]))[3:]
         link = f"https://t.me/c/{channel_id}/{a['info_message_id']}"
         safe_snippet = snippet.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
-        lines.append(f"• ID {a['id']} ({len(tracks)} tracks) [source]({link}) — {safe_snippet}")
-    lines.append("\nUse /undefer <id> to return an album to the pre-screen queue.")
+        lines.append(f"• ID {a['id']} ({len(tracks)} tracks) [source]({link}) — {safe_snippet} — `/undefer {a['id']}`")
+    lines.append("\nTap a command above to copy it.")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
@@ -141,7 +141,7 @@ async def cmd_undefer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update.effective_user.id):
         return
     if not context.args:
-        await update.message.reply_text("Usage: /undefer <album_id>")
+        await update.message.reply_text("Usage: `/undefer <album_id>`", parse_mode="Markdown")
         return
     try:
         album_id = int(context.args[0])
@@ -173,7 +173,7 @@ async def cmd_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for a in albums:
         tracks = get_tracks_for_album(a["id"])
         missing = sum(1 for t in tracks if not t["downloaded"])
-        lines.append(f"• ID {a['id']} — {missing}/{len(tracks)} tracks missing — /redownload {a['id']}")
+        lines.append(f"• ID {a['id']} — {missing}/{len(tracks)} tracks missing — `/redownload {a['id']}`")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
@@ -182,7 +182,7 @@ async def cmd_redownload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update.effective_user.id):
         return
     if not context.args:
-        await update.message.reply_text("Usage: /redownload <album_id>")
+        await update.message.reply_text("Usage: `/redownload <album_id>`", parse_mode="Markdown")
         return
     try:
         album_id = int(context.args[0])
@@ -315,7 +315,7 @@ async def cmd_reembed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update.effective_user.id):
         return
     if not context.args:
-        await update.message.reply_text("Usage: /reembed <album_id>")
+        await update.message.reply_text("Usage: `/reembed <album_id>`", parse_mode="Markdown")
         return
     try:
         album_id = int(context.args[0])
