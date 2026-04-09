@@ -72,6 +72,7 @@ azzaDB/
 ├── scrape_history.py
 ├── run_bot.py
 ├── fix_track_names.py
+├── fix_comment_tags.py
 ├── requirements.txt
 ├── data/
 │   └── azzadb.sqlite
@@ -112,8 +113,9 @@ azzaDB/
 - `src/bot/handlers/prescreen_handler.py` — sends `pre_screen` album cards with Defer/Send to AI buttons; "Send to AI" fires a background `asyncio.create_task` and immediately shows the next pre-screen card; bot notifies when extraction completes; `send_next_prescreen()` is called automatically after each approve/reject
 - `src/bot/handlers/verification_handler.py` — PTB `ConversationHandler` for approve/edit/reject flow; `send_album_card(context, album_id)` sends a specific album's card; `send_next_pending()` is used by `/next` for manual queue access
 - `src/scraper/asset_downloader.py` — downloads to `artist/album/` structure; fixes Windows-1256 mojibake in track names (`_fix_encoding`); falls back to `Track NN` if name is still unreadable; uses Telegram's original filename when `track_name_ar` is null
-- `src/pipeline/metadata_embedder.py` — handles both `.mp3` (via `mutagen.mp3.MP3`) and `.m4a` (via `mutagen.mp4.MP4`); genre is always `لطميات`; Hijri → Gregorian year via `hijri-converter`; artists joined with `"; "`; COMM comment = `occasion_ar | location_ar`; falls back to cover art embedded in the audio files when no album cover was downloaded
+- `src/pipeline/metadata_embedder.py` — handles both `.mp3` (via `mutagen.mp3.MP3`) and `.m4a` (via `mutagen.mp4.MP4`); genre is always `لطميات`; Hijri → Gregorian year via `hijri-converter`; artists joined with `"; "`; COMM comment = `occasion_ar | location_ar`; when `occasion_ar` is absent, falls back to the full Hijri date (`hijri_day hijri_month hijri_date`); falls back to cover art embedded in the audio files when no album cover was downloaded
 - `fix_track_names.py` — one-shot script to repair mojibake track names in already-downloaded albums; fixes DB, renames files on disk, and re-embeds tags; defaults to dry-run, use `--apply` to commit
+- `fix_comment_tags.py` — one-shot script to re-embed comment tags for albums embedded before the Hijri date fallback was added; only affects albums where `occasion_ar` is absent; defaults to dry-run, use `--apply` to commit
 
 ### Hydrogram session
 

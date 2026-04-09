@@ -146,6 +146,7 @@ azzaDB/
 ├── scrape_history.py         # CLI entry point: scrape + group + AI batch
 ├── run_bot.py                # Bot entry point
 ├── fix_track_names.py        # One-shot: fix mojibake names in existing albums
+├── fix_comment_tags.py       # One-shot: re-embed comment tags with Hijri date fallback
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
@@ -190,7 +191,7 @@ azzaDB/
 - **WAL mode** on SQLite lets the scraper and the bot share the same database safely.
 - **`run_migrations()`** must be called after `init_db()` on startup. It detects and applies the `pre_screen`/`deferred` status migration for existing databases automatically.
 - **Tracks are named** using the Telegram audio title field first, then `file_name`, then the saved path stem. Names with Windows-1256 mojibake are auto-corrected; names that remain unreadable fall back to `Track NN`.
-- **Metadata tags**: genre is hardcoded to `لطميات`; Hijri date is converted to Gregorian year for the TDRC/`©day` tag; artist names are joined with `"; "`.
+- **Metadata tags**: genre is hardcoded to `لطميات`; Hijri date is converted to Gregorian year for the TDRC/`©day` tag; artist names are joined with `"; "`. The COMM/`©cmt` comment tag is `occasion_ar | location_ar`; when `occasion_ar` is absent it falls back to the full Hijri date (`hijri_day hijri_month hijri_date`).
 - **Cover art**: uses the Telegram cover message if available, otherwise falls back to cover art already embedded in the audio files.
 - **Flood control**: `AIORateLimiter(max_retries=5)` is applied globally; `RetryAfter` errors are caught and logged as a single warning line. Progress message edits are throttled to once every 5 seconds.
 - **Colored logs**: each service prints in a distinct color (bot=cyan, scraper=green, AI=magenta, pipeline=blue, database=grey); warnings are yellow, errors are bold red.
@@ -209,4 +210,16 @@ docker compose exec bot python fix_track_names.py
 
 # Apply — renames files, updates DB, re-embeds tags
 docker compose exec bot python fix_track_names.py --apply
+```
+
+### Re-embed comment tags with Hijri date fallback
+
+If albums were embedded before the `occasion_ar` fallback was added (i.e. albums without an occasion have an empty comment tag):
+
+```bash
+# Preview which albums would be updated
+docker compose exec bot python fix_comment_tags.py
+
+# Apply — resets embedded flag and re-embeds affected albums
+docker compose exec bot python fix_comment_tags.py --apply
 ```
