@@ -146,7 +146,11 @@ def embed_metadata_for_album(album_id: int) -> int:
     artist_str = "; ".join(a["name_ar"] for a in artists) if artists else ""
     album_name = album.get("album_name_ar") or ""
     gregorian_year = _hijri_to_gregorian_year(album)
-    comment = " | ".join(p for p in [album.get("occasion_ar"), album.get("location_ar")] if p)
+    occasion = album.get("occasion_ar")
+    if not occasion:
+        date_parts = [p for p in [album.get("hijri_day"), album.get("hijri_month"), album.get("hijri_date")] if p]
+        occasion = " ".join(date_parts) if date_parts else None
+    comment = " | ".join(p for p in [occasion, album.get("location_ar")] if p)
     cover_bytes = _load_cover_bytes(album.get("cover_local_path"))
     if not cover_bytes:
         for track in tracks:
