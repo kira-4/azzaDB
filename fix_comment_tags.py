@@ -24,7 +24,8 @@ _HIJRI_MONTHS_ORDER = [
 def _build_comment(album: sqlite3.Row) -> str:
     occasion = album["occasion_ar"]
     if not occasion:
-        date_parts = [p for p in [album["hijri_day"], album["hijri_month"], album["hijri_date"]] if p]
+        date_parts = [p for p in [album["hijri_day"],
+                                  album["hijri_month"], album["hijri_date"]] if p]
         occasion = " ".join(date_parts) if date_parts else None
     parts = [p for p in [occasion, album["location_ar"]] if p]
     return " | ".join(parts)
@@ -52,13 +53,15 @@ def main(apply: bool):
         comment = _build_comment(album)
         occasion = album["occasion_ar"]
         # Show what changed (albums that previously had no occasion and thus an empty comment)
-        old_comment = " | ".join(p for p in [occasion, album["location_ar"]] if p)
+        old_comment = " | ".join(
+            p for p in [occasion, album["location_ar"]] if p)
         if comment == old_comment:
             skip_count += 1
             continue
 
         change_count += 1
-        print(f"[ALBUM {album['id']:>4}] {album['album_name_ar'] or '(unnamed)'}")
+        print(f"[ALBUM {album['id']:>4}] {
+              album['album_name_ar'] or '(unnamed)'}")
         print(f"         old comment: {old_comment!r}")
         print(f"         new comment: {comment!r}")
 
@@ -72,21 +75,25 @@ def main(apply: bool):
         conn.commit()
         conn.close()
 
-        print(f"\nApplied: reset embedded flag for {change_count} album(s), {skip_count} unchanged.")
+        print(f"\nApplied: reset embedded flag for {
+              change_count} album(s), {skip_count} unchanged.")
 
         if change_count:
             print("Re-embedding tags...")
             for album in albums:
                 comment = _build_comment(album)
-                old_comment = " | ".join(p for p in [album["occasion_ar"], album["location_ar"]] if p)
+                old_comment = " | ".join(
+                    p for p in [album["occasion_ar"], album["location_ar"]] if p)
                 if comment == old_comment:
                     continue
                 embedded = embed_metadata_for_album(album["id"])
-                print(f"  album {album['id']}: re-embedded {embedded} track(s)")
+                print(f"  album {album['id']
+                                 }: re-embedded {embedded} track(s)")
         print("Done.")
     else:
         conn.close()
-        print(f"\nDry run: {change_count} album(s) would be updated, {skip_count} already have an occasion (no change).")
+        print(f"\nDry run: {change_count} album(s) would be updated, {
+              skip_count} already have an occasion (no change).")
         print("Re-run with --apply to commit changes.")
 
 
@@ -94,6 +101,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Re-embed comment tags using the Hijri date fallback when occasion_ar is absent."
     )
-    parser.add_argument("--apply", action="store_true", help="Actually apply changes (default: dry run)")
+    parser.add_argument("--apply", action="store_true",
+                        help="Actually apply changes (default: dry run)")
     args = parser.parse_args()
     main(apply=args.apply)
